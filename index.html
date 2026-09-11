@@ -1,0 +1,894 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DFS Ledger</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ground:#e9ecef; --panel:#fff; --rule:#d3d9de; --rule-hard:#aab4bd;
+  --ink:#0f1720; --ink-2:#4a5560; --ink-3:#7b8792;
+  --accent:#b26a00; --accent-soft:#fdf3e3;
+  --up:#0d7a45; --down:#b0202b;
+  --rail:236px;
+  --sans:"IBM Plex Sans",system-ui,-apple-system,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{background:var(--ground);color:var(--ink);font-family:var(--sans);font-size:14px;line-height:1.45;-webkit-font-smoothing:antialiased}
+button,input,select,textarea{font-family:inherit;font-size:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* ---------- shell ---------- */
+.shell{display:flex;min-height:100vh}
+.rail{width:var(--rail);flex:0 0 var(--rail);background:var(--ink);color:#c6ced6;padding:20px 0 40px;position:sticky;top:0;height:100vh;overflow-y:auto}
+.brand{padding:0 20px 18px;border-bottom:1px solid #26313d;margin-bottom:14px}
+.brand h1{margin:0;font-size:17px;font-weight:600;letter-spacing:-.01em;color:#fff}
+.brand p{margin:3px 0 0;font-size:11.5px;color:#7b8792;font-family:var(--mono)}
+.railgroup{padding:12px 20px 6px;font-size:11px;color:#68737e;font-weight:600}
+.railbtn{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;background:none;border:0;text-align:left;padding:8px 20px;cursor:pointer;color:#c6ced6;font-size:13.5px;border-left:3px solid transparent}
+.railbtn:hover{background:#1b2531;color:#fff}
+.railbtn.on{background:#1b2531;color:#fff;border-left-color:var(--accent);font-weight:600}
+.railbtn .cnt{font-family:var(--mono);font-size:11px;color:#68737e}
+.railbtn.on .cnt{color:var(--accent)}
+
+.main{flex:1;min-width:0;display:flex;flex-direction:column}
+
+/* ---------- bankroll strip ---------- */
+.strip{background:var(--panel);border-bottom:1px solid var(--rule-hard);padding:14px 26px;display:flex;gap:34px;flex-wrap:wrap;align-items:flex-end;position:sticky;top:0;z-index:20}
+.stat .k{font-size:11.5px;color:var(--ink-3);margin-bottom:1px}
+.stat .v{font-family:var(--mono);font-size:21px;font-weight:600;letter-spacing:-.02em;line-height:1.1}
+.stat .v.sm{font-size:16px;font-weight:500}
+.up{color:var(--up)} .down{color:var(--down)}
+.strip .spacer{flex:1}
+
+/* ---------- content ---------- */
+.view{padding:24px 26px 60px;display:none}
+.view.on{display:block}
+h2.sec{margin:0 0 3px;font-size:19px;font-weight:600;letter-spacing:-.015em}
+p.sub{margin:0 0 20px;color:var(--ink-2);max-width:70ch}
+h3.sub2{margin:28px 0 10px;font-size:14px;font-weight:600}
+
+.panel{background:var(--panel);border:1px solid var(--rule);margin-bottom:18px}
+.panel > .ph{padding:11px 16px;border-bottom:1px solid var(--rule);display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+.panel > .ph h4{margin:0;font-size:13.5px;font-weight:600}
+.panel > .ph .note{font-size:12px;color:var(--ink-3)}
+.pb{padding:16px}
+
+/* ---------- tables ---------- */
+table{width:100%;border-collapse:collapse}
+th{text-align:left;font-size:11.5px;font-weight:600;color:var(--ink-2);padding:8px 10px;border-bottom:1px solid var(--rule-hard);white-space:nowrap;background:var(--panel);position:sticky;top:0}
+td{padding:7px 10px;border-bottom:1px solid var(--rule);vertical-align:middle}
+tr:last-child td{border-bottom:0}
+tbody tr:hover{background:#f6f8f9}
+.num{font-family:var(--mono);text-align:right;font-variant-numeric:tabular-nums}
+.tscroll{max-height:560px;overflow:auto}
+.thin td,.thin th{padding:5px 9px;font-size:13px}
+
+/* ---------- controls ---------- */
+.btn{background:var(--ink);color:#fff;border:1px solid var(--ink);padding:6px 13px;cursor:pointer;font-size:13px;font-weight:500}
+.btn:hover{background:#25303c}
+.btn.ghost{background:none;color:var(--ink);border-color:var(--rule-hard)}
+.btn.ghost:hover{background:#f1f4f6}
+.btn.danger{background:none;color:var(--down);border-color:#e2b6ba}
+.btn.danger:hover{background:#fdf1f2}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+input[type=text],input[type=number],input[type=date],select,textarea{border:1px solid var(--rule-hard);background:#fff;padding:6px 9px}
+textarea{width:100%;font-family:var(--mono);font-size:12px;resize:vertical}
+label.fld{display:block;margin-bottom:11px}
+label.fld span{display:block;font-size:12px;color:var(--ink-2);margin-bottom:3px}
+label.fld input,label.fld select{width:100%}
+.row{display:flex;gap:12px;flex-wrap:wrap}
+.row > *{flex:1;min-width:150px}
+.filters{display:flex;gap:9px;flex-wrap:wrap;align-items:center}
+.filters select,.filters input{min-width:120px}
+
+/* ---------- misc ---------- */
+.tag{display:inline-block;padding:1px 7px;border:1px solid var(--rule-hard);font-size:11.5px;font-family:var(--mono);white-space:nowrap;background:#f4f6f7}
+.tag.hot{background:var(--accent-soft);border-color:#e8c894;color:#8a5200}
+.drop{border:1.5px dashed var(--rule-hard);background:#f6f8f9;padding:22px;text-align:center;cursor:pointer}
+.drop:hover,.drop.over{border-color:var(--accent);background:var(--accent-soft)}
+.drop strong{display:block;font-size:13.5px;margin-bottom:3px}
+.drop span{font-size:12px;color:var(--ink-2)}
+.empty{padding:40px 20px;text-align:center;color:var(--ink-2)}
+.empty strong{display:block;font-size:15px;color:var(--ink);margin-bottom:5px;font-weight:600}
+.bar{height:7px;background:#e4e8eb;position:relative;min-width:52px}
+.bar i{position:absolute;left:0;top:0;bottom:0;background:var(--accent)}
+.toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);background:var(--ink);color:#fff;padding:10px 18px;font-size:13px;z-index:100;opacity:0;pointer-events:none;transition:opacity .16s}
+.toast.on{opacity:1}
+.finding{border-left:3px solid var(--accent);padding:2px 0 2px 14px;margin-bottom:16px}
+.finding h5{margin:0 0 3px;font-size:13.5px;font-weight:600}
+.finding p{margin:0;color:var(--ink-2);font-size:13px;max-width:74ch}
+.finding .fig{font-family:var(--mono);color:var(--ink);font-weight:500}
+.warn{background:#fdf3e3;border:1px solid #e8c894;padding:10px 13px;font-size:12.5px;margin-bottom:14px}
+@media(max-width:860px){
+  .shell{flex-direction:column}
+  .rail{width:100%;height:auto;position:static;flex:none;padding-bottom:10px;display:flex;flex-wrap:wrap;align-items:center}
+  .brand{width:100%;border-bottom:0;padding-bottom:10px;margin-bottom:4px}
+  .railgroup{display:none}
+  .railbtn{width:auto;border-left:0;border-bottom:3px solid transparent;padding:7px 13px}
+  .railbtn.on{border-left:0;border-bottom-color:var(--accent)}
+  .strip{gap:20px;padding:12px 16px}
+  .view{padding:18px 14px 50px}
+}
+</style>
+</head>
+<body>
+<div class="shell">
+  <nav class="rail">
+    <div class="brand"><h1>DFS Ledger</h1><p id="brandSub">no entries yet</p></div>
+    <div class="railgroup">Track</div>
+    <button class="railbtn on" data-view="dash">Overview <span class="cnt" id="cDash"></span></button>
+    <button class="railbtn" data-view="entries">Entries <span class="cnt" id="cEntries"></span></button>
+    <button class="railbtn" data-view="exposure">Exposure</button>
+    <div class="railgroup">Analyse</div>
+    <button class="railbtn" data-view="structure">Structure ROI</button>
+    <button class="railbtn" data-view="strategy">Strategy notes</button>
+    <div class="railgroup">Data</div>
+    <button class="railbtn" data-view="import">Import</button>
+    <button class="railbtn" data-view="backup">Backup</button>
+  </nav>
+  <div class="main">
+    <div class="strip" id="strip"></div>
+    <div id="views"></div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+"use strict";
+/* ============================================================
+   DFS LEDGER — multi-sport DFS entry + results tracker
+   Core is sport-agnostic. Everything sport-specific lives in
+   FORMATS below: add a format, get tracking + ROI for free.
+   ============================================================ */
+
+/* ---------- storage adapter: works on GitHub Pages, local file,
+              or inside a Claude artifact ---------- */
+const KEY = "dfs_ledger_v1";
+const Store = {
+  async load(){
+    try{
+      if (window.storage && window.storage.get){
+        try{ const r = await window.storage.get(KEY); return r ? JSON.parse(r.value) : null; }
+        catch(e){ return null; }
+      }
+      const raw = localStorage.getItem(KEY);
+      return raw ? JSON.parse(raw) : null;
+    }catch(e){ console.error("load failed",e); return null; }
+  },
+  async save(data){
+    const s = JSON.stringify(data);
+    try{
+      if (window.storage && window.storage.set){ await window.storage.set(KEY, s); return true; }
+      localStorage.setItem(KEY, s); return true;
+    }catch(e){ console.error("save failed",e); toast("Couldn't save — storage may be full or blocked"); return false; }
+  }
+};
+
+/* ---------- format registry ----------
+   slots     : roster template
+   detect    : (rosterPositionSet, sportHint) -> bool
+   tags      : (lineup) -> {label: value}   derived structure worth measuring
+   tagOrder  : which tags to chart on the Structure view
+------------------------------------------------------------ */
+const cnt = (arr, f) => arr.reduce((a,x)=>(a[f(x)]=(a[f(x)]||0)+1,a),{});
+const teamSplit = lu => {
+  const t = cnt(lu, p=>p.team||"?"); const v = Object.values(t).sort((a,b)=>b-a);
+  return v.length<2 ? `${v[0]||0}-0` : `${v[0]}-${v[1]}`;
+};
+const gamesUsed = lu => new Set(lu.map(p=>p.game||p.team)).size;
+
+function nflClassicTags(lu){
+  const qb = lu.find(p=>p.pos==="QB");
+  let shape = "No QB", bringBack = "—";
+  if (qb){
+    const mates = lu.filter(p=>p!==qb && p.team===qb.team && ["WR","TE","RB"].includes(p.pos));
+    const rec = mates.filter(p=>p.pos!=="RB");
+    if (rec.length===0) shape = "Naked QB";
+    else if (rec.length===1) shape = `QB + 1 ${rec[0].pos}`;
+    else shape = `QB + ${rec.length} pass catchers`;
+    if (qb.oppTeam){
+      const bb = lu.filter(p=>p.team===qb.oppTeam && ["WR","TE","RB"].includes(p.pos));
+      bringBack = bb.length ? `Yes (${bb.length})` : "No";
+    }
+    if (mates.some(p=>p.pos==="RB")) shape += " + RB";
+  }
+  return { "Stack shape": shape, "Bring-back": bringBack,
+           "Games used": String(gamesUsed(lu)), "Teams used": String(new Set(lu.map(p=>p.team)).size) };
+}
+function showdownTags(lu){
+  const c = lu.find(p=>p.slot==="CPT") || lu[0];
+  const qbs = lu.filter(p=>p.pos==="QB").length;
+  return { "Captain position": c ? c.pos : "?", "Captain team": c ? (c.team||"?") : "?",
+           "Team split": teamSplit(lu), "Both QBs": qbs>=2 ? "Yes" : "No" };
+}
+function mlbTags(lu){
+  const bats = lu.filter(p=>p.pos!=="P" && p.pos!=="SP" && p.pos!=="RP");
+  const byTeam = cnt(bats, p=>p.team||"?");
+  const sizes = Object.values(byTeam).sort((a,b)=>b-a);
+  const top = sizes[0]||0, second = sizes[1]||0;
+  return { "Primary stack": `${top}-man`, "Secondary stack": second>=2 ? `${second}-man` : "None",
+           "Stack pattern": `${top}-${second}`, "Pitchers": String(lu.length-bats.length) };
+}
+function nbaTags(lu){
+  return { "Teams used": String(new Set(lu.map(p=>p.team)).size),
+           "Games used": String(gamesUsed(lu)) };
+}
+
+const FORMATS = {
+  "nfl-showdown": { sport:"NFL", label:"NFL Showdown", slots:["CPT","FLEX","FLEX","FLEX","FLEX","FLEX"],
+    tags: showdownTags, tagOrder:["Captain position","Team split","Both QBs","Captain team"] },
+  "nfl-classic": { sport:"NFL", label:"NFL Classic", slots:["QB","RB","RB","WR","WR","WR","TE","FLEX","DST"],
+    tags: nflClassicTags, tagOrder:["Stack shape","Bring-back","Games used"] },
+  "mlb-showdown": { sport:"MLB", label:"MLB Showdown", slots:["CPT","UTIL","UTIL","UTIL","UTIL","UTIL"],
+    tags: showdownTags, tagOrder:["Captain position","Team split","Captain team"] },
+  "mlb-classic": { sport:"MLB", label:"MLB Classic", slots:["P","P","C","1B","2B","3B","SS","OF","OF","OF"],
+    tags: mlbTags, tagOrder:["Primary stack","Secondary stack","Stack pattern"] },
+  "nba-showdown": { sport:"NBA", label:"NBA Showdown", slots:["CPT","UTIL","UTIL","UTIL","UTIL","UTIL"],
+    tags: showdownTags, tagOrder:["Captain position","Team split","Captain team"] },
+  "nba-classic": { sport:"NBA", label:"NBA Classic", slots:["PG","SG","SF","PF","C","G","F","UTIL"],
+    tags: nbaTags, tagOrder:["Teams used","Games used"] }
+};
+
+/* Detect format from the slot header + the positions present. */
+function detectFormat(slotHeaders, positions){
+  const slots = slotHeaders.map(s=>s.toUpperCase().trim());
+  const pos = new Set(positions.map(p=>(p||"").toUpperCase()));
+  const isShowdown = slots.includes("CPT") || slots.includes("MVP") || slots.length===6;
+  const nfl = pos.has("QB")||pos.has("DST")||pos.has("TE");
+  const mlb = pos.has("SP")||pos.has("P")||pos.has("1B")||pos.has("SS")||pos.has("OF")||pos.has("C");
+  const nba = pos.has("PG")||pos.has("SG")||pos.has("SF")||pos.has("PF");
+  let sport = nfl ? "NFL" : nba ? "NBA" : mlb ? "MLB" : "NFL";
+  if (isShowdown) return `${sport.toLowerCase()}-showdown`;
+  if (slots.includes("QB")) return "nfl-classic";
+  if (slots.includes("PG")) return "nba-classic";
+  if (slots.includes("1B")||slots.includes("SS")) return "mlb-classic";
+  return `${sport.toLowerCase()}-classic`;
+}
+
+/* ---------- state ---------- */
+let DB = { entries:[], players:{}, meta:{created:new Date().toISOString()} };
+const uid = () => Math.random().toString(36).slice(2,10);
+const money = n => (n<0?"-":"")+"$"+Math.abs(n).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+const money0 = n => (n<0?"-":"")+"$"+Math.abs(n).toLocaleString(undefined,{maximumFractionDigits:0});
+const pct = n => (n>0?"+":"")+n.toFixed(1)+"%";
+const esc = s => String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+function toast(msg){
+  const t=document.getElementById("toast"); t.textContent=msg; t.classList.add("on");
+  clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove("on"),2600);
+}
+
+/* ---------- CSV ---------- */
+function parseCSV(text){
+  const rows=[]; let row=[], cur="", q=false;
+  text = text.replace(/^\uFEFF/,"");
+  for(let i=0;i<text.length;i++){
+    const c=text[i];
+    if(q){
+      if(c==='"'){ if(text[i+1]==='"'){cur+='"';i++;} else q=false; }
+      else cur+=c;
+    } else {
+      if(c==='"') q=true;
+      else if(c===","){ row.push(cur); cur=""; }
+      else if(c==="\n"){ row.push(cur); rows.push(row); row=[]; cur=""; }
+      else if(c!=="\r") cur+=c;
+    }
+  }
+  if(cur.length||row.length){ row.push(cur); rows.push(row); }
+  return rows.filter(r=>r.some(c=>c.trim()!==""));
+}
+const num = v => { const n=parseFloat(String(v).replace(/[$,%\s]/g,"")); return isFinite(n)?n:0; };
+</script>
+<script>
+"use strict";
+/* ============ IMPORT PIPELINES ============ */
+
+/* DK files often carry the salary table appended to the right of the
+   entries table. Find it wherever it starts. */
+function extractPlayerTable(rows){
+  const want = ["position","name + id","name","id","roster position","salary"];
+  for (const r of rows){
+    for (let c=0;c<r.length;c++){
+      const win = r.slice(c,c+6).map(x=>x.toLowerCase().trim());
+      if (want.every((w,i)=>win[i]===w)) return {headerRow:r, col:c};
+    }
+  }
+  return null;
+}
+function ingestPlayers(rows){
+  const loc = extractPlayerTable(rows);
+  if(!loc) return 0;
+  const c = loc.col; const start = rows.indexOf(loc.headerRow)+1; let n=0;
+  const gameCol = c+6, teamCol = c+7;
+  for(let i=start;i<rows.length;i++){
+    const r = rows[i]; const id = (r[c+3]||"").trim();
+    if(!id || !/^\d+$/.test(id)) continue;
+    const game = (r[gameCol]||"").trim();
+    const team = (r[teamCol]||"").trim();
+    let opp = "";
+    const m = game.match(/^([A-Z]{2,4})@([A-Z]{2,4})/);
+    if(m) opp = (m[1]===team) ? m[2] : m[1];
+    DB.players[id] = { id, name:(r[c+2]||"").trim(), pos:(r[c]||"").trim(),
+      slotType:(r[c+4]||"").trim(), salary:num(r[c+5]), game, team, oppTeam:opp };
+    n++;
+  }
+  return n;
+}
+
+/* DK prices the captain slot as its own player row, so only apply the
+   multiplier when a base (FLEX) row has been dropped into a captain slot. */
+function slotSalary(p, slotName){
+  const capSlot = ["CPT","MVP"].includes(String(slotName).toUpperCase());
+  const capRow  = ["CPT","MVP"].includes(String(p.slotType||"").toUpperCase());
+  if (capSlot && !capRow) return Math.round(p.salary*1.5);
+  return p.salary;
+}
+
+/* DK entries export: Entry ID, Contest Name, Contest ID, Entry Fee, then slot columns */
+function ingestEntries(rows){
+  let hdr=null, hi=-1;
+  for(let i=0;i<rows.length;i++){
+    const low = rows[i].map(x=>x.toLowerCase().trim());
+    if(low[0]==="entry id" && low.includes("contest name")){ hdr=rows[i]; hi=i; break; }
+  }
+  if(!hdr) return {added:0,skipped:0,err:"No 'Entry ID' header row found."};
+  const slotCols=[]; const stop=["","instructions"];
+  for(let c=4;c<hdr.length;c++){
+    const h=(hdr[c]||"").trim();
+    if(!h || stop.includes(h.toLowerCase())) break;
+    slotCols.push({c,name:h});
+  }
+  if(!slotCols.length) return {added:0,skipped:0,err:"No roster slot columns found."};
+
+  const existing = new Set(DB.entries.map(e=>e.entryId));
+  let added=0, skipped=0, empty=0;
+  for(let i=hi+1;i<rows.length;i++){
+    const r=rows[i]; const eid=(r[0]||"").trim();
+    if(!/^\d+$/.test(eid)) continue;
+    const lineup=[];
+    for(const s of slotCols){
+      const raw=(r[s.c]||"").trim(); if(!raw) continue;
+      const m = raw.match(/\((\d+)\)\s*$/);
+      const pid = m ? m[1] : (/^\d+$/.test(raw) ? raw : null);
+      const p = pid ? DB.players[pid] : null;
+      lineup.push({ slot:s.name, playerId:pid||"", name:p?p.name:raw.replace(/\s*\(\d+\)\s*$/,""),
+                    pos:p?p.pos:"", team:p?p.team:"", oppTeam:p?p.oppTeam:"",
+                    game:p?p.game:"", salary:p?slotSalary(p,s.name):0 });
+    }
+    if(!lineup.length){ empty++; continue; }
+    if(existing.has(eid)){ skipped++; continue; }
+    const fmt = detectFormat(slotCols.map(s=>s.name), lineup.map(p=>p.pos));
+    const gi = lineup.map(p=>p.game).find(Boolean) || "";
+    const dm = gi.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+    DB.entries.push({
+      id: uid(), entryId: eid, contest:(r[1]||"").trim(), contestId:(r[2]||"").trim(),
+      fee: num(r[3]), format: fmt, sport: FORMATS[fmt]?FORMATS[fmt].sport:"?",
+      slate: gi.split(" ")[0] || "",
+      date: dm ? `${dm[3]}-${dm[1]}-${dm[2]}` : new Date().toISOString().slice(0,10),
+      lineup, points:null, rank:null, fieldSize:null, payout:null, source:"DK entries", notes:""
+    });
+    added++;
+  }
+  return {added, skipped, empty};
+}
+
+/* DK contest-standings export: Rank, EntryId, EntryName, TimeRemaining, Points */
+function ingestResults(rows){
+  let hdr=null,hi=-1;
+  for(let i=0;i<rows.length;i++){
+    const low=rows[i].map(x=>x.toLowerCase().trim().replace(/\s+/g,""));
+    if(low.includes("entryid") && low.includes("points")){ hdr=low; hi=i; break; }
+  }
+  if(!hdr) return {matched:0,err:"No standings header (needs EntryId and Points columns)."};
+  const ci = n => hdr.indexOf(n);
+  const iId=ci("entryid"), iPts=ci("points"), iRank=ci("rank"), iPrize=hdr.findIndex(h=>/prize|winnings|payout/.test(h));
+  const byId = {}; DB.entries.forEach(e=>{ byId[e.entryId]=e; });
+  let matched=0, field=0;
+  for(let i=hi+1;i<rows.length;i++){
+    const r=rows[i]; const eid=(r[iId]||"").trim();
+    if(/^\d+$/.test(eid)) field++;
+    const e=byId[eid]; if(!e) continue;
+    e.points = num(r[iPts]);
+    if(iRank>=0 && r[iRank]) e.rank = num(r[iRank]);
+    if(iPrize>=0 && r[iPrize]) e.payout = num(r[iPrize]);
+    matched++;
+  }
+  DB.entries.forEach(e=>{ if(byId[e.entryId] && e.points!=null && !e.fieldSize && field) e.fieldSize=field; });
+  return {matched, field};
+}
+
+/* ============ LEGACY MLB TRACKER CONVERSION ============
+   The old MLB tracker stored one row per entry with a result but no
+   lineup. Those rows still carry bankroll, contest and approach-tag
+   history, so they convert cleanly — structure analysis just stays
+   empty for them. */
+function looksLegacyMLB(r){
+  return r && typeof r === "object" && !r.lineup
+      && r.contest != null && (r.cls != null || r.ctype != null);
+}
+function convertLegacy(r){
+  const showdown = /showdown/i.test(r.contest || "");
+  const gm = String(r.contest||"").match(/\(([A-Z]{2,3})\s*@\s*([A-Z]{2,3})\)/);
+  const fee = num(r.fee != null ? r.fee : r.invested);
+  return {
+    id: uid(),
+    entryId: "mlb-" + String(r.id != null ? r.id : Math.random()),
+    contest: String(r.contest||"").trim(), contestId: "",
+    fee, format: showdown ? "mlb-showdown" : "mlb-classic", sport: "MLB",
+    slate: gm ? `${gm[1]}@${gm[2]}` : "",
+    date: r.date || "", lineup: [],
+    points:    r.pts   == null ? null : num(r.pts),
+    rank:      r.rank  == null ? null : num(r.rank),
+    fieldSize: r.field == null ? null : num(r.field),
+    payout:    r.win   == null ? null : num(r.win),
+    approach: String(r.tag||"").trim() || "Untagged",
+    contestClass: r.cls || "", contestType: r.ctype || "",
+    source: "MLB tracker", notes: ""
+  };
+}
+
+/* ============ DERIVED / AGGREGATION ============ */
+function tagsFor(e){
+  const f = FORMATS[e.format];
+  if(!f || !f.tags || !e.lineup || !e.lineup.length) return {};
+  try{ return f.tags(e.lineup); }catch(err){ return {}; }
+}
+function settled(e){ return e.payout!=null || e.points!=null; }
+function net(e){ return (e.payout||0) - (e.fee||0); }
+
+function agg(list){
+  const fees = list.reduce((a,e)=>a+(e.fee||0),0);
+  const won  = list.reduce((a,e)=>a+(e.payout||0),0);
+  const s = list.filter(e=>e.payout!=null);
+  const sf = s.reduce((a,e)=>a+(e.fee||0),0);
+  const sw = s.reduce((a,e)=>a+(e.payout||0),0);
+  return { n:list.length, fees, won, net:won-fees,
+           roi: sf>0 ? (sw-sf)/sf*100 : null,
+           settled:s.length, cashes:s.filter(e=>(e.payout||0)>0).length,
+           cashRate: s.length ? s.filter(e=>(e.payout||0)>0).length/s.length*100 : null };
+}
+function groupBy(list, fn){
+  const g={}; list.forEach(e=>{ const k=fn(e); if(k==null) return; (g[k]=g[k]||[]).push(e); }); return g;
+}
+</script>
+<script>
+"use strict";
+/* ============ FILTER STATE ============ */
+const F = { sport:"", format:"", contest:"", from:"", to:"" };
+function filtered(){
+  return DB.entries.filter(e=>
+    (!F.sport  || e.sport===F.sport) &&
+    (!F.format || e.format===F.format) &&
+    (!F.contest|| e.contest===F.contest) &&
+    (!F.from   || e.date>=F.from) &&
+    (!F.to     || e.date<=F.to));
+}
+const uniq = fn => [...new Set(DB.entries.map(fn).filter(Boolean))].sort();
+
+function filterBar(id){
+  return `<div class="filters" id="${id}">
+    <select data-f="sport"><option value="">All sports</option>${uniq(e=>e.sport).map(s=>`<option${F.sport===s?" selected":""}>${esc(s)}</option>`).join("")}</select>
+    <select data-f="format"><option value="">All formats</option>${uniq(e=>e.format).map(s=>`<option value="${esc(s)}"${F.format===s?" selected":""}>${esc(FORMATS[s]?FORMATS[s].label:s)}</option>`).join("")}</select>
+    <select data-f="contest"><option value="">All contests</option>${uniq(e=>e.contest).map(s=>`<option value="${esc(s)}"${F.contest===s?" selected":""}>${esc(s.length>44?s.slice(0,44)+"…":s)}</option>`).join("")}</select>
+    <input type="date" data-f="from" value="${F.from}" title="From date">
+    <input type="date" data-f="to" value="${F.to}" title="To date">
+    ${(F.sport||F.format||F.contest||F.from||F.to)?'<button class="btn ghost" data-clear="1">Clear</button>':""}
+  </div>`;
+}
+
+/* ============ VIEWS ============ */
+function vStrip(){
+  const a = agg(filtered());
+  const cls = a.net>0?"up":a.net<0?"down":"";
+  const rcl = a.roi==null?"":a.roi>0?"up":a.roi<0?"down":"";
+  return `
+    <div class="stat"><div class="k">Net</div><div class="v ${cls}">${a.n?money0(a.net):"—"}</div></div>
+    <div class="stat"><div class="k">ROI</div><div class="v ${rcl}">${a.roi==null?"—":pct(a.roi)}</div></div>
+    <div class="stat"><div class="k">Entered</div><div class="v sm">${a.n?money0(a.fees):"—"}</div></div>
+    <div class="stat"><div class="k">Won</div><div class="v sm">${a.n?money0(a.won):"—"}</div></div>
+    <div class="stat"><div class="k">Cash rate</div><div class="v sm">${a.cashRate==null?"—":a.cashRate.toFixed(0)+"%"}</div></div>
+    <div class="spacer"></div>
+    <div class="stat"><div class="k">Entries</div><div class="v sm">${a.n}<span style="color:var(--ink-3);font-size:12px"> / ${a.settled} settled</span></div></div>`;
+}
+
+function roiTable(groups, labelHead){
+  const keys = Object.keys(groups).sort((a,b)=>agg(groups[b]).n-agg(groups[a]).n);
+  if(!keys.length) return `<div class="empty">Nothing to break down yet.</div>`;
+  const max = Math.max(...keys.map(k=>agg(groups[k]).n));
+  return `<table class="thin"><thead><tr>
+      <th>${esc(labelHead)}</th><th class="num">Entries</th><th></th>
+      <th class="num">Entered</th><th class="num">Won</th><th class="num">Net</th>
+      <th class="num">ROI</th><th class="num">Cash%</th></tr></thead><tbody>
+    ${keys.map(k=>{const a=agg(groups[k]);return `<tr>
+      <td>${esc(k)}</td>
+      <td class="num">${a.n}</td>
+      <td style="width:70px"><div class="bar"><i style="width:${a.n/max*100}%"></i></div></td>
+      <td class="num">${money0(a.fees)}</td>
+      <td class="num">${money0(a.won)}</td>
+      <td class="num ${a.net>0?"up":a.net<0?"down":""}">${a.settled?money0(a.net):"—"}</td>
+      <td class="num ${a.roi==null?"":a.roi>0?"up":"down"}">${a.roi==null?"—":pct(a.roi)}</td>
+      <td class="num">${a.cashRate==null?"—":a.cashRate.toFixed(0)+"%"}</td></tr>`;}).join("")}
+  </tbody></table>`;
+}
+
+function vDash(){
+  const list = filtered();
+  if(!DB.entries.length) return `<h2 class="sec">Overview</h2>
+    <div class="panel"><div class="empty"><strong>No entries yet</strong>
+    Import a DraftKings entries file to get started. Go to Import.</div></div>`;
+  const bySport = groupBy(list, e=>e.sport);
+  const byFormat = groupBy(list, e=>FORMATS[e.format]?FORMATS[e.format].label:e.format);
+  const byContest = groupBy(list, e=>e.contest.length>52?e.contest.slice(0,52)+"…":e.contest);
+  const byApproach = groupBy(list, e=>e.approach);
+  const byType = groupBy(list, e=>e.contestType);
+  const slates = groupBy(list, e=>`${e.date} · ${e.slate||FORMATS[e.format].sport}`);
+  const skeys = Object.keys(slates).sort().reverse().slice(0,14);
+  const unsettled = list.filter(e=>e.payout==null).length;
+  return `<h2 class="sec">Overview</h2>
+  <p class="sub">Everything below respects the filters. ROI counts only entries with a payout recorded.</p>
+  ${filterBar("fDash")}
+  ${unsettled?`<div class="warn" style="margin-top:14px">${unsettled} ${unsettled===1?"entry has":"entries have"} no payout recorded yet, so they sit outside every ROI figure. Import a contest-standings file or type payouts in on the Entries view.</div>`:"<div style='height:14px'></div>"}
+  <div class="panel"><div class="ph"><h4>By sport</h4></div>${roiTable(bySport,"Sport")}</div>
+  <div class="panel"><div class="ph"><h4>By format</h4></div>${roiTable(byFormat,"Format")}</div>
+  ${Object.keys(byApproach).length ? `<div class="panel"><div class="ph"><h4>By approach</h4>
+      <span class="note">how the lineups were generated</span></div>${roiTable(byApproach,"Approach")}</div>` : ""}
+  ${Object.keys(byType).length ? `<div class="panel"><div class="ph"><h4>By contest type</h4></div>${roiTable(byType,"Type")}</div>` : ""}
+  <div class="panel"><div class="ph"><h4>By contest</h4></div>${roiTable(byContest,"Contest")}</div>
+  <div class="panel"><div class="ph"><h4>Recent slates</h4><span class="note">most recent 14</span></div>
+    ${roiTable(Object.fromEntries(skeys.map(k=>[k,slates[k]])),"Slate")}</div>`;
+}
+
+function vEntries(){
+  const list = filtered().slice().sort((a,b)=> b.date.localeCompare(a.date) || (b.points||0)-(a.points||0));
+  if(!DB.entries.length) return `<h2 class="sec">Entries</h2><div class="panel"><div class="empty">
+    <strong>No entries yet</strong>Import a DraftKings entries file first.</div></div>`;
+  return `<h2 class="sec">Entries</h2>
+  <p class="sub">Points, rank and payout are editable — click a cell and type. Structure tags are derived from the lineup, not typed.</p>
+  ${filterBar("fEnt")}
+  <div class="panel" style="margin-top:14px"><div class="ph">
+      <h4>${list.length} ${list.length===1?"entry":"entries"}</h4>
+      <span class="note">Lineup column shows captain first for showdown</span></div>
+    <div class="tscroll"><table class="thin"><thead><tr>
+      <th>Date</th><th>Contest</th><th>Format</th><th>Lineup</th><th>Structure</th>
+      <th class="num">Fee</th><th class="num">Pts</th><th class="num">Rank</th>
+      <th class="num">Payout</th><th class="num">Net</th><th></th></tr></thead><tbody>
+    ${list.map(e=>{
+      const t = tagsFor(e);
+      const f = FORMATS[e.format];
+      const chips = e.lineup.length
+        ? (f?f.tagOrder:[]).slice(0,3).map(k=>t[k]?`<span class="tag">${esc(t[k])}</span>`:"").join(" ")
+        : (e.approach ? `<span class="tag hot">${esc(e.approach)}</span>` : "");
+      const lu = e.lineup.length
+        ? e.lineup.map(p=>p.slot.toUpperCase()==="CPT"?`<b>${esc(p.name)}</b>`:esc(p.name)).join(", ")
+        : `<span style="color:var(--ink-3)">not recorded</span>`;
+      const nv = net(e);
+      return `<tr data-id="${e.id}">
+        <td style="white-space:nowrap">${esc(e.date)}</td>
+        <td title="${esc(e.contest)}">${esc(e.contest.length>26?e.contest.slice(0,26)+"…":e.contest)}</td>
+        <td>${esc(f?f.label:e.format)}</td>
+        <td style="max-width:340px;font-size:12px;line-height:1.35">${lu}</td>
+        <td>${chips}</td>
+        <td class="num">${money(e.fee||0)}</td>
+        <td class="num" contenteditable data-fld="points">${e.points==null?"":e.points}</td>
+        <td class="num" contenteditable data-fld="rank">${e.rank==null?"":e.rank}</td>
+        <td class="num" contenteditable data-fld="payout">${e.payout==null?"":e.payout}</td>
+        <td class="num ${e.payout==null?"":nv>0?"up":nv<0?"down":""}">${e.payout==null?"—":money(nv)}</td>
+        <td><button class="btn ghost" data-del="${e.id}" style="padding:2px 8px;font-size:12px">Remove</button></td>
+      </tr>`;}).join("")}
+    </tbody></table></div></div>`;
+}
+
+function vStructure(){
+  const list = filtered();
+  if(!list.length) return `<h2 class="sec">Structure ROI</h2><div class="panel"><div class="empty">
+    <strong>Nothing to analyse yet</strong>Import entries, then record results.</div></div>`;
+  const withLineups = list.filter(e=>e.lineup.length);
+  const fmts = [...new Set(withLineups.map(e=>e.format))];
+  const bare = list.length - withLineups.length;
+  let html = `<h2 class="sec">Structure ROI</h2>
+  <p class="sub">How each build shape actually performed. Structure is read off the lineup automatically, so this fills in as you import — nothing to tag by hand.</p>
+  ${filterBar("fStruct")}
+  ${bare?`<div class="warn" style="margin-top:14px">${bare} ${bare===1?"entry has":"entries have"} no lineup recorded — imported history, most likely. They count toward bankroll and approach ROI but cannot be broken down by build shape.</div>`:""}
+  <div class="warn" style="margin-top:14px">One season of NFL gives roughly twenty slates. These splits will not reach significance inside a year — read them as a process audit, not proof that a shape is profitable.</div>`;
+  const appr = groupBy(list, e=>e.approach);
+  if(Object.keys(appr).length > 1)
+    html += `<h3 class="sub2">Approach <span style="color:var(--ink-3);font-weight:400">· across every format</span></h3>
+      <div class="panel"><div class="ph"><h4>How the lineups were generated</h4></div>${roiTable(appr,"Approach")}</div>`;
+  for(const fk of fmts){
+    const f = FORMATS[fk]; if(!f) continue;
+    const sub = withLineups.filter(e=>e.format===fk);
+    html += `<h3 class="sub2">${esc(f.label)} <span style="color:var(--ink-3);font-weight:400">· ${sub.length} entries</span></h3>`;
+    for(const tag of f.tagOrder){
+      const g = groupBy(sub, e=>tagsFor(e)[tag]);
+      if(!Object.keys(g).length) continue;
+      html += `<div class="panel"><div class="ph"><h4>${esc(tag)}</h4></div>${roiTable(g,tag)}</div>`;
+    }
+  }
+  return html;
+}
+
+function vExposure(){
+  const list = filtered().filter(e=>e.lineup.length);
+  if(!list.length) return `<h2 class="sec">Exposure</h2><div class="panel"><div class="empty">
+    <strong>No lineups in view</strong>Exposure needs recorded lineups. Imported history without them won't appear here.</div></div>`;
+  const slates = groupBy(list, e=>`${e.date} · ${e.slate||e.sport} · ${e.contest.length>34?e.contest.slice(0,34)+"…":e.contest}`);
+  const keys = Object.keys(slates).sort().reverse();
+  return `<h2 class="sec">Exposure</h2>
+  <p class="sub">Player exposure per contest, with captain share broken out where the format has one.</p>
+  ${filterBar("fExp")}
+  <div style="height:14px"></div>
+  ${keys.map(k=>{
+    const es = slates[k]; const n = es.length;
+    const tot={}, cap={}, pts={};
+    es.forEach(e=>e.lineup.forEach(p=>{
+      if(!p.name) return;
+      tot[p.name]=(tot[p.name]||0)+1;
+      if(p.slot.toUpperCase()==="CPT") cap[p.name]=(cap[p.name]||0)+1;
+      pts[p.name]=p.team||"";
+    }));
+    const names=Object.keys(tot).sort((a,b)=>tot[b]-tot[a]);
+    return `<div class="panel"><div class="ph"><h4>${esc(k)}</h4><span class="note">${n} ${n===1?"lineup":"lineups"}</span></div>
+      <div class="tscroll" style="max-height:340px"><table class="thin"><thead><tr>
+        <th>Player</th><th>Team</th><th class="num">Lineups</th><th></th><th class="num">Exposure</th><th class="num">As captain</th>
+      </tr></thead><tbody>${names.map(nm=>`<tr>
+        <td>${esc(nm)}</td><td>${esc(pts[nm])}</td>
+        <td class="num">${tot[nm]}</td>
+        <td style="width:90px"><div class="bar"><i style="width:${tot[nm]/n*100}%"></i></div></td>
+        <td class="num">${(tot[nm]/n*100).toFixed(0)}%</td>
+        <td class="num">${cap[nm]?(cap[nm]/n*100).toFixed(0)+"%":"—"}</td></tr>`).join("")}
+      </tbody></table></div></div>`;
+  }).join("")}`;
+}
+</script>
+<script>
+"use strict";
+/* ============ STRATEGY NOTES ============ */
+const NOTES = {
+  "NFL — classic": [
+    ["Pick the game, then the player","Vegas implied total is the strongest pregame signal in two seasons of data. Moving from a low-implied team to a high-implied one lifts <span class='fig'>QB +5</span>, <span class='fig'>RB1 +6</span>, <span class='fig'>WR1 +3</span>, <span class='fig'>WR2 +2</span>, <span class='fig'>TE1 +2</span> DK points. The apex object is the game, not the team — opposing WR1s correlate at <span class='fig'>+0.32</span>, the strongest cross-team pair measured."],
+    ["In shootouts, WR2 is the better stack partner","QB↔WR1 is <span class='fig'>+0.36</span> and QB↔WR2 is <span class='fig'>+0.41</span> overall. In high-total games the second receiver pulls away — <span class='fig'>.43</span> against <span class='fig'>.26</span>. He is also cheaper and lower-owned, so the edge sits in public view."],
+    ["RBs are correlation-neutral, not negative","QB↔RB1 measures <span class='fig'>+0.02</span> across 839 team-games. The environment lift and the TD-allocation drag cancel. Roster the back on projection and price; stack theory has nothing to say about him."],
+    ["No QB means no stack","Same-team WR1↔WR2 is <span class='fig'>+0.05</span> — teammates correlate through the quarterback, not with each other. WR+TE without the QB is <span class='fig'>−0.02</span>, and <span class='fig'>−0.11</span> in shootouts, where they mildly compete."]
+  ],
+  "NFL — showdown": [
+    ["Nothing dominates the captain slot","Across 544 games the optimal captain was RB <span class='fig'>33.6%</span>, WR <span class='fig'>30.5%</span>, QB <span class='fig'>28.7%</span>, TE <span class='fig'>5.3%</span>. That one pick supplied <span class='fig'>32.4%</span> of the winning lineup's points and came from the team that won the game <span class='fig'>67.5%</span> of the time."],
+    ["Game script flips the captain","In blowouts of 14+ the split runs RB <span class='fig'>38%</span> / QB <span class='fig'>30%</span> / WR <span class='fig'>25%</span>. In games landing 7+ over the closing total it inverts to QB <span class='fig'>35%</span> / RB <span class='fig'>30%</span> / WR <span class='fig'>30%</span>. Read the line before setting captain leans."],
+    ["The two quarterbacks move together","Opposing QBs correlate at <span class='fig'>+0.573</span> — the largest figure measured anywhere in NFL, larger than any classic pair. Rostering both is a concentrated bet on the shootout, and fading the opposing QB differentiates far less than it feels, because you are fading something that moves with what you already own."],
+    ["The one-sided build is the rare one","Optimal team splits ran 4-2 <span class='fig'>48.3%</span>, 3-3 <span class='fig'>38.8%</span>, 5-1 only <span class='fig'>12.9%</span>. Roughly seven of eight optimal lineups took at least two from the losing side. This measure is cap-sensitive — it came from a cap-free backtest — so treat it as a prior, not a constraint."]
+  ],
+  "Reading these numbers": [
+    ["Optimal is not the same as profitable","Every frequency above describes where the winning lineup came from, not what is <span class='fig'>+EV</span> to roster. RB captains being optimal a third of the time does not mean captaining an RB a third of the time is correct — that depends on how the field is captaining, which a backtest of outcomes cannot see. Use these to set ranges, then let ownership decide where inside the range to sit."]
+  ]
+};
+function vStrategy(){
+  return `<h2 class="sec">Strategy notes</h2>
+  <p class="sub">Findings from backtesting, kept next to the results so the two can argue with each other.</p>
+  ${Object.entries(NOTES).map(([k,items])=>`
+    <div class="panel"><div class="ph"><h4>${esc(k)}</h4></div><div class="pb">
+      ${items.map(([h,b])=>`<div class="finding"><h5>${esc(h)}</h5><p>${b}</p></div>`).join("")}
+    </div></div>`).join("")}`;
+}
+
+/* ============ IMPORT / BACKUP ============ */
+function vImport(){
+  const np = Object.keys(DB.players).length;
+  return `<h2 class="sec">Import</h2>
+  <p class="sub">Drop DraftKings files here in any order. Sport and format are detected from the roster slots, so NFL, MLB and NBA all land in the same ledger.</p>
+  <div class="panel"><div class="ph"><h4>1. Entries</h4><span class="note">${np} players known</span></div><div class="pb">
+    <p style="margin:0 0 12px;color:var(--ink-2);font-size:13px">Your filled DraftKings entries export. Most DK exports carry the salary table alongside the entries, so one file usually does both jobs. Re-importing the same file will not duplicate anything.</p>
+    <div class="drop" data-kind="entries"><strong>Drop the entries CSV, or click to choose</strong>
+      <span>DKEntries.csv — reads Entry ID, contest, fee and every roster slot</span></div>
+  </div></div>
+  <div class="panel"><div class="ph"><h4>2. Salaries</h4></div><div class="pb">
+    <p style="margin:0 0 12px;color:var(--ink-2);font-size:13px">Only needed when the entries file arrives without its salary table, or when you want the player pool loaded ahead of lock.</p>
+    <div class="drop" data-kind="salaries"><strong>Drop a DKSalaries CSV</strong>
+      <span>Fills in position, team, opponent and salary for each player ID</span></div>
+  </div></div>
+  <div class="panel"><div class="ph"><h4>3. Results</h4></div><div class="pb">
+    <p style="margin:0 0 12px;color:var(--ink-2);font-size:13px">The contest-standings export DraftKings offers once a contest completes. Matched to your entries by Entry ID. Payouts often are not in that file — type them on the Entries view and the ROI figures follow.</p>
+    <div class="drop" data-kind="results"><strong>Drop a contest-standings CSV</strong>
+      <span>Reads rank and points, and payout when the file carries one</span></div>
+  </div></div>
+  <input type="file" id="filePick" accept=".csv,text/csv" style="display:none">`;
+}
+function vBackup(){
+  return `<h2 class="sec">Backup</h2>
+  <p class="sub">The ledger lives in this browser only. Export before you clear site data, switch machines, or trust anything important to it.</p>
+  <div class="panel"><div class="ph"><h4>Export</h4></div><div class="pb">
+    <p style="margin:0 0 12px;color:var(--ink-2);font-size:13px">${DB.entries.length} entries, ${Object.keys(DB.players).length} players.</p>
+    <button class="btn" id="expJson">Download JSON backup</button>
+    <button class="btn ghost" id="expCsv">Download entries as CSV</button>
+  </div></div>
+  <div class="panel"><div class="ph"><h4>Restore or migrate</h4></div><div class="pb">
+    <p style="margin:0 0 10px;color:var(--ink-2);font-size:13px">Paste a JSON backup to merge it in. Entries already here are matched on Entry ID and left alone, so a merge is safe to repeat.</p>
+    <p style="margin:0 0 10px;color:var(--ink-2);font-size:13px">The old MLB tracker's rows are recognised and converted automatically — paste them straight in. Those rows carry no lineups, so they land in bankroll, contest and approach reporting but not in the build-shape breakdowns.</p>
+    <textarea id="impJson" rows="7" placeholder='{"entries":[...],"players":{...}}'></textarea>
+    <div style="margin-top:10px"><button class="btn" id="impBtn">Merge into ledger</button></div>
+  </div></div>
+  <div class="panel"><div class="ph"><h4>Clear</h4></div><div class="pb">
+    <p style="margin:0 0 12px;color:var(--ink-2);font-size:13px">Removes every entry and player from this browser. Export first.</p>
+    <button class="btn danger" id="wipe">Delete everything</button>
+  </div></div>`;
+}
+</script>
+<script>
+"use strict";
+/* ============ WIRING ============ */
+const VIEWS = { dash:vDash, entries:vEntries, exposure:vExposure, structure:vStructure,
+                strategy:vStrategy, import:vImport, backup:vBackup };
+let CUR = "dash";
+
+function render(){
+  document.getElementById("strip").innerHTML = vStrip();
+  document.getElementById("views").innerHTML = `<div class="view on">${VIEWS[CUR]()}</div>`;
+  document.getElementById("cEntries").textContent = DB.entries.length || "";
+  const set = DB.entries.filter(e=>e.payout!=null).length;
+  document.getElementById("cDash").textContent = set ? `${set}` : "";
+  const a = agg(DB.entries);
+  document.getElementById("brandSub").textContent =
+    DB.entries.length ? `${DB.entries.length} entries · ${a.roi==null?"unsettled":pct(a.roi)+" ROI"}` : "no entries yet";
+  document.querySelectorAll(".railbtn").forEach(b=>b.classList.toggle("on", b.dataset.view===CUR));
+  wire();
+}
+async function persist(){ await Store.save(DB); }
+
+function wire(){
+  document.querySelectorAll("[data-f]").forEach(el=>{
+    el.onchange = () => { F[el.dataset.f] = el.value; render(); };
+  });
+  const cl = document.querySelector("[data-clear]");
+  if(cl) cl.onclick = () => { Object.keys(F).forEach(k=>F[k]=""); render(); };
+
+  document.querySelectorAll("[contenteditable][data-fld]").forEach(td=>{
+    td.onblur = async () => {
+      const id = td.closest("tr").dataset.id, fld = td.dataset.fld;
+      const e = DB.entries.find(x=>x.id===id); if(!e) return;
+      const raw = td.textContent.trim();
+      e[fld] = raw==="" ? null : num(raw);
+      await persist(); render();
+    };
+    td.onkeydown = ev => { if(ev.key==="Enter"){ ev.preventDefault(); td.blur(); } };
+  });
+  document.querySelectorAll("[data-del]").forEach(b=>{
+    b.onclick = async () => {
+      const e = DB.entries.find(x=>x.id===b.dataset.del);
+      if(!e || !confirm(`Remove entry ${e.entryId}? This cannot be undone.`)) return;
+      DB.entries = DB.entries.filter(x=>x.id!==b.dataset.del);
+      await persist(); render(); toast("Entry removed");
+    };
+  });
+
+  /* file drops */
+  const pick = document.getElementById("filePick");
+  document.querySelectorAll(".drop").forEach(d=>{
+    d.onclick = () => { pick.dataset.kind = d.dataset.kind; pick.value=""; pick.click(); };
+    d.ondragover = ev => { ev.preventDefault(); d.classList.add("over"); };
+    d.ondragleave = () => d.classList.remove("over");
+    d.ondrop = ev => { ev.preventDefault(); d.classList.remove("over");
+      if(ev.dataTransfer.files[0]) handleFile(ev.dataTransfer.files[0], d.dataset.kind); };
+  });
+  if(pick) pick.onchange = () => { if(pick.files[0]) handleFile(pick.files[0], pick.dataset.kind); };
+
+  const b = id => document.getElementById(id);
+  if(b("expJson")) b("expJson").onclick = () => download(`dfs-ledger-${new Date().toISOString().slice(0,10)}.json`, JSON.stringify(DB,null,2), "application/json");
+  if(b("expCsv"))  b("expCsv").onclick = exportCsv;
+  if(b("impBtn"))  b("impBtn").onclick = mergeJson;
+  if(b("wipe"))    b("wipe").onclick = async () => {
+    if(!confirm("Delete every entry and player from this browser? Export a backup first — this cannot be undone.")) return;
+    DB = { entries:[], players:{}, meta:{created:new Date().toISOString()} };
+    await persist(); render(); toast("Ledger cleared");
+  };
+}
+
+function handleFile(file, kind){
+  const fr = new FileReader();
+  fr.onload = async () => {
+    let rows;
+    try{ rows = parseCSV(fr.result); }
+    catch(e){ toast("Couldn't read that file as CSV"); return; }
+    if(kind==="salaries"){
+      const n = ingestPlayers(rows);
+      if(!n){ toast("No salary table found in that file"); return; }
+      await persist(); render(); toast(`${n} players loaded`);
+    } else if(kind==="results"){
+      const r = ingestResults(rows);
+      if(r.err){ toast(r.err); return; }
+      await persist(); render();
+      toast(r.matched ? `${r.matched} entries updated` : "No Entry IDs in that file matched your entries");
+    } else {
+      const p = ingestPlayers(rows);
+      const r = ingestEntries(rows);
+      if(r.err){ toast(r.err); return; }
+      await persist(); render();
+      const bits = [`${r.added} added`];
+      if(r.skipped) bits.push(`${r.skipped} already here`);
+      if(r.empty)   bits.push(`${r.empty} unfilled`);
+      if(p)         bits.push(`${p} players`);
+      toast(bits.join(" · "));
+      if(r.added && !p && !Object.keys(DB.players).length)
+        setTimeout(()=>toast("No salary table in that file — drop a DKSalaries CSV to fill in teams and positions"),2800);
+    }
+  };
+  fr.readAsText(file);
+}
+
+function download(name, text, type){
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([text],{type}));
+  a.download = name; a.click(); URL.revokeObjectURL(a.href);
+  toast("Downloaded");
+}
+function exportCsv(){
+  const head = ["Date","Sport","Format","Contest","EntryID","Fee","Points","Rank","Payout","Net"];
+  const tagKeys = [...new Set(DB.entries.flatMap(e=>Object.keys(tagsFor(e))))];
+  const maxSlots = Math.max(0,...DB.entries.map(e=>e.lineup.length));
+  const slotHead = Array.from({length:maxSlots},(_,i)=>`Slot ${i+1}`);
+  const q = v => `"${String(v==null?"":v).replace(/"/g,'""')}"`;
+  const lines = [[...head,...tagKeys,...slotHead].map(q).join(",")];
+  DB.entries.forEach(e=>{
+    const t = tagsFor(e);
+    lines.push([e.date,e.sport,FORMATS[e.format]?FORMATS[e.format].label:e.format,e.contest,e.entryId,
+      e.fee,e.points,e.rank,e.payout, e.payout==null?"":net(e),
+      ...tagKeys.map(k=>t[k]||""),
+      ...Array.from({length:maxSlots},(_,i)=>{const p=e.lineup[i];return p?`${p.slot}: ${p.name}`:"";})
+    ].map(q).join(","));
+  });
+  download(`dfs-ledger-${new Date().toISOString().slice(0,10)}.csv`, lines.join("\n"), "text/csv");
+}
+async function mergeJson(){
+  const ta = document.getElementById("impJson");
+  let inc;
+  try{ inc = JSON.parse(ta.value); }
+  catch(e){ toast("That is not valid JSON"); return; }
+
+  /* Accept three shapes: a DFS Ledger backup, a bare array of entries,
+     or a whole-origin localStorage dump with the old tracker's key inside. */
+  let rows = [];
+  if (Array.isArray(inc)) rows = inc;
+  else if (inc && Array.isArray(inc.entries)) rows = inc.entries;
+  else if (inc && typeof inc === "object"){
+    for (const v of Object.values(inc)){
+      if (Array.isArray(v)) { rows = rows.concat(v); continue; }
+      if (typeof v === "string"){
+        try { const p = JSON.parse(v); if (Array.isArray(p)) rows = rows.concat(p); } catch(err){}
+      }
+    }
+  }
+
+  const have = new Set(DB.entries.map(e=>e.entryId));
+  let added=0, legacy=0;
+  rows.forEach(raw=>{
+    if(!raw || typeof raw !== "object") return;
+    let e = raw;
+    if(looksLegacyMLB(raw)){ e = convertLegacy(raw); legacy++; }
+    if(!e || !e.entryId || have.has(e.entryId)) return;
+    if(!e.id) e.id = uid();
+    if(!e.lineup) e.lineup = [];
+    if(!e.format) e.format = detectFormat(e.lineup.map(p=>p.slot||""), e.lineup.map(p=>p.pos||""));
+    if(!e.sport)  e.sport  = FORMATS[e.format] ? FORMATS[e.format].sport : "?";
+    if(!e.approach) e.approach = "Untagged";
+    DB.entries.push(e); have.add(e.entryId); added++;
+  });
+  if(inc && inc.players) Object.assign(DB.players, inc.players);
+  await persist(); ta.value=""; render();
+  toast(added ? `${added} merged${legacy?` · ${legacy} converted from the MLB tracker`:""}`
+              : "Nothing new to merge");
+}
+
+document.querySelectorAll(".railbtn").forEach(b=>{
+  b.onclick = () => { CUR = b.dataset.view; render(); window.scrollTo(0,0); };
+});
+
+(async function init(){
+  const saved = await Store.load();
+  if(saved && saved.entries) DB = Object.assign(DB, saved);
+  render();
+})();
+</script>
+</body>
+</html>
