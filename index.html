@@ -104,6 +104,12 @@ label.fld input,label.fld select{width:100%}
 .finding h5{margin:0 0 3px;font-size:13.5px;font-weight:600}
 .finding p{margin:0;color:var(--ink-2);font-size:13px;max-width:74ch}
 .finding .fig{font-family:var(--mono);color:var(--ink);font-weight:500}
+.finding table{margin:9px 0 4px;width:auto;min-width:240px;border:1px solid var(--rule)}
+.finding th,.finding td{padding:4px 11px;font-size:12.5px}
+.finding th{background:#f6f8f9}
+.finding td.num{font-family:var(--mono)}
+.finding ol,.finding ul{margin:7px 0 0;padding-left:19px;color:var(--ink-2);font-size:13px}
+.finding li{margin-bottom:4px}
 .warn{background:#fdf3e3;border:1px solid #e8c894;padding:10px 13px;font-size:12.5px;margin-bottom:14px}
 @media(max-width:860px){
   .shell{flex-direction:column}
@@ -121,7 +127,7 @@ label.fld input,label.fld select{width:100%}
 <div class="shell">
   <nav class="rail">
     <div class="brand"><h1>DFS Ledger</h1><p id="brandSub">no entries yet</p>
-      <p style="margin:4px 0 0;font-size:10.5px;color:#4d5761;font-family:var(--mono)">build 11</p></div>
+      <p style="margin:4px 0 0;font-size:10.5px;color:#4d5761;font-family:var(--mono)">build 12</p></div>
     <div class="railgroup">Track</div>
     <button class="railbtn on" data-view="dash">Overview <span class="cnt" id="cDash"></span></button>
     <button class="railbtn" data-view="entries">Entries <span class="cnt" id="cEntries"></span></button>
@@ -264,7 +270,11 @@ const today = () => {
 const money = n => (n<0?"-":"")+"$"+Math.abs(n).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
 const money0 = n => (n<0?"-":"")+"$"+Math.abs(n).toLocaleString(undefined,{maximumFractionDigits:0});
 const pct = n => (n>0?"+":"")+n.toFixed(1)+"%";
-const APPROACHES = () => [...new Set(DB.entries.map(e=>e.approach).filter(a=>a && a!=="Untagged"))].sort();
+/* Chris's canonical tag list, so the pickers are useful before any
+   tagged data exists. Anything you've actually used gets merged in. */
+const KNOWN_APPROACHES = ["Apex Balanced","Apex Upside","Apex Cash","Banded","Manual","Flat spread","SIM ROI top-N"];
+const APPROACHES = () => [...new Set([...KNOWN_APPROACHES,
+  ...DB.entries.map(e=>e.approach).filter(a=>a && a!=="Untagged")])].sort();
 const esc = s => String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
 function toast(msg){
@@ -749,18 +759,82 @@ function vExposure(){
 <script>
 "use strict";
 /* ============ STRATEGY NOTES ============ */
+const T = (head, rows) => `<table><thead><tr>${head.map(h=>`<th>${h}</th>`).join("")}</tr></thead><tbody>${
+  rows.map(r=>`<tr>${r.map((c,i)=>i?`<td class="num">${c}</td>`:`<td>${c}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+
 const NOTES = {
-  "NFL — classic": [
-    ["Pick the game, then the player","Vegas implied total is the strongest pregame signal in two seasons of data. Moving from a low-implied team to a high-implied one lifts <span class='fig'>QB +5</span>, <span class='fig'>RB1 +6</span>, <span class='fig'>WR1 +3</span>, <span class='fig'>WR2 +2</span>, <span class='fig'>TE1 +2</span> DK points. The apex object is the game, not the team — opposing WR1s correlate at <span class='fig'>+0.32</span>, the strongest cross-team pair measured."],
-    ["In shootouts, WR2 is the better stack partner","QB↔WR1 is <span class='fig'>+0.36</span> and QB↔WR2 is <span class='fig'>+0.41</span> overall. In high-total games the second receiver pulls away — <span class='fig'>.43</span> against <span class='fig'>.26</span>. He is also cheaper and lower-owned, so the edge sits in public view."],
-    ["RBs are correlation-neutral, not negative","QB↔RB1 measures <span class='fig'>+0.02</span> across 839 team-games. The environment lift and the TD-allocation drag cancel. Roster the back on projection and price; stack theory has nothing to say about him."],
-    ["No QB means no stack","Same-team WR1↔WR2 is <span class='fig'>+0.05</span> — teammates correlate through the quarterback, not with each other. WR+TE without the QB is <span class='fig'>−0.02</span>, and <span class='fig'>−0.11</span> in shootouts, where they mildly compete."]
+  "NFL Classic — GPP": [
+    ["Pick games first, players second","Game environment — the Vegas implied total — is the strongest pregame signal available. Moving from a low-total game to a high-total one lifts production by roughly:" +
+      T(["Position","DK pts"],[["QB","+5"],["RB1","+6"],["WR1","+3"],["WR2","+2"],["TE1","+2"]]) +
+      "Nothing you do at the player level matters as much as which games you are in."],
+    ["The correlation pairs that matter", T(["Pair","r","Note"],[
+      ["QB ↔ WR2","+0.41","Beats WR1; gap widens in high totals (.43 vs .26)"],
+      ["QB ↔ WR1","+0.36","The obvious stack, not the best one"],
+      ["WR1 ↔ opposing WR1","+0.32","Strongest cross-team pair — the bring-back"],
+      ["Same-team WR1 ↔ WR2","+0.05","Effectively nothing without the QB"],
+      ["QB ↔ RB1","+0.02","Over 839 team-games"],
+      ["WR + TE, no QB","−0.02","−0.11 in shootouts"]])],
+    ["The rules that follow","<ol>" +
+      "<li><b>No QB means no stack.</b> WR+TE without the quarterback is two independent players, and it grades slightly negative in shootouts.</li>" +
+      "<li><b>Prefer QB+WR2 over QB+WR1</b>, especially in high-total games. WR2 is usually cheaper and lower-owned for a higher correlation.</li>" +
+      "<li><b>RB stacks are correlation-neutral, not negative.</b> The folklore is dead. Roster backs on projection and price, not stack logic.</li>" +
+      "<li><b>Use the opposing WR1 as the bring-back</b> — the strongest cross-team relationship measured.</li></ol>"]
   ],
-  "NFL — showdown": [
-    ["Nothing dominates the captain slot","Across 544 games the optimal captain was RB <span class='fig'>33.6%</span>, WR <span class='fig'>30.5%</span>, QB <span class='fig'>28.7%</span>, TE <span class='fig'>5.3%</span>. That one pick supplied <span class='fig'>32.4%</span> of the winning lineup's points and came from the team that won the game <span class='fig'>67.5%</span> of the time."],
-    ["Game script flips the captain","In blowouts of 14+ the split runs RB <span class='fig'>38%</span> / QB <span class='fig'>30%</span> / WR <span class='fig'>25%</span>. In games landing 7+ over the closing total it inverts to QB <span class='fig'>35%</span> / RB <span class='fig'>30%</span> / WR <span class='fig'>30%</span>. Read the line before setting captain leans."],
-    ["The two quarterbacks move together","Opposing QBs correlate at <span class='fig'>+0.573</span> — the largest figure measured anywhere in NFL, larger than any classic pair. Rostering both is a concentrated bet on the shootout, and fading the opposing QB differentiates far less than it feels, because you are fading something that moves with what you already own."],
-    ["The one-sided build is the rare one","Optimal team splits ran 4-2 <span class='fig'>48.3%</span>, 3-3 <span class='fig'>38.8%</span>, 5-1 only <span class='fig'>12.9%</span>. Roughly seven of eight optimal lineups took at least two from the losing side. This measure is cap-sensitive — it came from a cap-free backtest — so treat it as a prior, not a constraint."]
+  "NFL Showdown": [
+    ["Nothing dominates the captain slot","Across 544 games of 2024-25 regular season:" +
+      T(["Position","Optimal CPT"],[["RB","33.6%"],["WR","30.5%"],["QB","28.7%"],["TE","5.3%"]]) +
+      "That one pick supplied <span class='fig'>32.4%</span> of the winning lineup's points, and came from the team that won the game <span class='fig'>67.5%</span> of the time."],
+    ["Captain flips with game script", T(["Script","RB","QB","WR"],[
+      ["Blowout (14+ margin)","38%","30%","25%"],
+      ["7+ points over the total","30%","35%","30%"]]) +
+      "The captain decision is downstream of what you think the game <i>is</i>. Project the script first, then pick the captain."],
+    ["The one-sided build is the rare one", T(["Split","Share"],[["4-2","48.3%"],["3-3","38.8%"],["5-1","12.9%"]]) +
+      "Roughly seven of eight optimal lineups took at least two from the losing side. Position mix of the optimal six: WR 32.9 / QB 25.9 / RB 24.4 / TE 10.7."],
+    ["The two quarterbacks move together","Opposing QBs correlate at <span class='fig'>+0.573</span> — the largest relationship measured anywhere in Chris's NFL work. Playing both is a concentrated bet on a shootout that wins or loses together. The corollary: fading the opposing QB differentiates far less than it feels, because the field under-rosters that pairing anyway."],
+    ["Read the showdown numbers with the caveats attached","Historical DK salaries were unavailable, so the backtest ran <b>cap-free</b> — the $50k constraint was never enforced. Kicker scoring was approximated from FG-distance buckets. Treat the 5-1 figure of 12.9% as an upper bound in particular."]
+  ],
+  "MLB Classic — GPP": [
+    ["Accept consensus on arms","Winners roster chalk pitchers and differentiate with bats. Never fade the top arm for ownership. Choosing among co-equal top arms by leverage is fine — that is not a fade."],
+    ["Do not zero out chalk teams","Winning stacks by Vegas rank: <span class='fig'>p25 = 2</span>, <span class='fig'>p50 = 5</span>, <span class='fig'>p75 = 7</span>. The meat is ranks 3-7, but about a quarter of winners come from the top two teams. Implied totals of <span class='fig'>4.3-4.8</span> are the eruption band."],
+    ["Stack shape","<ul>" +
+      "<li>5-man stacks are the majority of winners</li>" +
+      "<li>Sub-10%-owned bats inside mid-board stacks give leverage and ceiling together</li>" +
+      "<li>Bring-backs appear in only <span class='fig'>21-29%</span> of winners — not structural. The sixth spot goes to best available anywhere on the slate</li>" +
+      "<li>Spend near max: about <span class='fig'>$49.8k</span> on clean slates, <span class='fig'>$48.5k</span> on messy ones. Raw points win</li></ul>"],
+    ["The explosive stack can come from anywhere","Chris's Baltimore hit came from Vegas rank 14 of 20 — the bottom of his own top-stacks tool. Spread beats concentration."],
+    ["Reading the top-stacks table","<ul>" +
+      "<li><b>$ %</b> is the column for flat-payout contests; <b>W %</b> is for top-heavy ones</li>" +
+      "<li><b>Joint ROI</b> (stack plus specific arms) is the main lever on small slates, where team selection barely differentiates</li>" +
+      "<li>Treat the figures as tiers, not a strict order — samples are small and thin ones are flagged ⚠</li>" +
+      "<li>3-man ROI is not comparable to 5-man. Smaller stacks post better ROI partly because they are cheaper to be wrong about</li></ul>"],
+    ["Why small differences in implied total mean less than they look","The run-scoring model is negative binomial, variance/mean <span class='fig'>2.44</span>, fit from 1,042 box-score games. Runs are overdispersed and a Poisson model badly understates the tails — which is why a 4.2-total team has a real explosion chance."]
+  ],
+  "MLB — cash": [
+    ["Construction","<ul>" +
+      "<li>Filter to players within <span class='fig'>2.5 FP</span> between Stokastic and SplashPlay</li>" +
+      "<li>Prefer SplashPlay-higher players to differentiate from the Stokastic-heavy field</li>" +
+      "<li>At small contest sizes, lineup quality matters more than differentiation</li>" +
+      "<li>Never fade top arms — floor is the whole point</li></ul>"]
+  ],
+  "Portfolio construction — Apex era": [
+    ["Match the engine to the payout shape, not the field size", T(["Contest shape","Engine","Sort column"],[
+      ["Flat payout (~10% to first, 23-26% cash)","Balanced","Cash"],
+      ["Top-heavy large field","Pure Upside","Top-10"],
+      ["Small-field WTA (7-person)","—","Cash"],
+      ["Mid-field WTA (118-person)","Pure Upside","Top-10"]])],
+    ["Cash More is portfolio-optimized","Its edge comes from forcing diversification across a whole book, so it does little at single-entry cash. Its cash-line estimate is calibrated to the loaded contest too — usually a ~25% GPP line rather than a double-up's ~50% line."],
+    ["Exposure targets cannot bind at 20 lineups","A 40% target is 8 chunky lineups; at 100 it is a distribution the builder can actually shape. Scale lineup count through micro-stakes, but treat lineup count and total spend as separate decisions."],
+    ["Sorted lists are browse orders, not portfolios","Taking the top N by any single quality metric concentrates hard on whichever team the sim likes. Use the portfolio builder, then verify the exposure column after the build."],
+    ["Override % is a preference, not a cap","It orders the swap drawer by proximity to your target; the build does not aim at your number. The actual percentage after the build is the only real figure."]
+  ],
+  "Build timing": [
+    ["Build as late as you comfortably can","Lineup changes and data pushes between a 6pm build and a 7:15 build move the sim meaningfully. A stale book patched with two swaps is worse than a fresh build."],
+    ["Late swap is a last necessity, not an EV harvester","Use it only for information that could not have been known before lock — a genuine post-lock scratch. <b>Reload the pool first</b>, or the sim will offer players whose games have already locked."],
+    ["Inside ten minutes of lock, don't start a fresh build","Verify confirmed lineups and enter what you have."]
+  ],
+  "Approach tags": [
+    ["The tags in use","<span class='tag'>Apex Balanced</span> <span class='tag'>Apex Upside</span> <span class='tag'>Apex Cash</span> <span class='tag'>Banded</span> <span class='tag'>Manual</span> <span class='tag'>Flat spread</span> <span class='tag'>SIM ROI top-N</span><br><br>These seed the pickers on the Import and Entries views, so the ROI splits stay comparable across slates."],
+    ["Flat spread is tested and rejected","Hand-picking one lineup per team across 20 passes is impractical at nightly volume, and it silently concentrates pitcher exposure because nothing tracks starters globally across the passes."]
   ],
   "Reading these numbers": [
     ["Optimal is not the same as profitable","Every frequency above describes where the winning lineup came from, not what is <span class='fig'>+EV</span> to roster. RB captains being optimal a third of the time does not mean captaining an RB a third of the time is correct — that depends on how the field is captaining, which a backtest of outcomes cannot see. Use these to set ranges, then let ownership decide where inside the range to sit."]
