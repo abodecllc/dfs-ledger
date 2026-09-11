@@ -251,7 +251,8 @@ function detectFormat(slotHeaders, positions){
 }
 
 /* ---------- state ---------- */
-let DB = { entries:[], players:{}, meta:{created:new Date().toISOString()} };
+let DB = { entries:[], players:{}, settings:{ticketsAtFace:true},
+           meta:{created:new Date().toISOString()} };
 const uid = () => Math.random().toString(36).slice(2,10);
 const money = n => (n<0?"-":"")+"$"+Math.abs(n).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
 const money0 = n => (n<0?"-":"")+"$"+Math.abs(n).toLocaleString(undefined,{maximumFractionDigits:0});
@@ -375,6 +376,74 @@ function ingestEntries(rows){
     added++;
   }
   return {added, skipped, empty};
+}
+
+/* DK "contest entry history" export from the My Contests page.
+   The most complete source DraftKings gives: every entry across every
+   sport, with place, points, field size, fee and winnings — everything
+   except the lineups. Rows already in the ledger are updated in place,
+   so results land on lineups imported earlier. */
+function registerFormat(key, sport, label){
+  if(!FORMATS[key]) FORMATS[key] = { sport, label, slots:[], tags:null, tagOrder:[] };
+  return key;
+}
+function formatFromHistory(sport, gameType){
+  const s = String(sport||"?").toUpperCase();
+  const g = String(gameType||"").toLowerCase();
+  const kind = /showdown|captain/.test(g) ? "showdown"
+             : /best ball/.test(g)        ? "bestball" : "classic";
+  const nice = kind==="bestball" ? "Best Ball" : kind[0].toUpperCase()+kind.slice(1);
+  return registerFormat(`${s.toLowerCase()}-${kind}`, s, `${s} ${nice}`);
+}
+function ingestHistory(rows){
+  let hdr=null, hi=-1;
+  for(let i=0;i<rows.length;i++){
+    const low = rows[i].map(x=>x.toLowerCase().trim());
+    if(low.includes("entry_key") && low.includes("contest_date_est")){ hdr=low; hi=i; break; }
+  }
+  if(!hdr) return {err:"Not an entry-history file (needs Entry_Key and Contest_Date_EST columns)."};
+  const C = n => hdr.indexOf(n);
+  const i_key=C("entry_key"), i_ent=C("entry"), i_ck=C("contest_key"), i_dt=C("contest_date_est"),
+        i_pl=C("place"), i_pt=C("points"), i_wn=C("winnings_non_ticket"), i_wt=C("winnings_ticket"),
+        i_fld=C("contest_entries"), i_fee=C("entry_fee"), i_sp=C("sport"), i_gt=C("game_type");
+
+  const byId = {}; DB.entries.forEach(e=>{ byId[e.entryId]=e; });
+  let added=0, updated=0, tickets=0;
+  for(let i=hi+1;i<rows.length;i++){
+    const r=rows[i]; const eid=String(r[i_key]||"").trim();
+    if(!/^\d+$/.test(eid)) continue;
+    const cash   = i_wn>=0 ? num(r[i_wn]) : 0;
+    const ticket = i_wt>=0 ? num(r[i_wt]) : 0;
+    if(ticket) tickets++;
+    const res = {
+      contest:String(r[i_ent]||"").trim(), contestId:String(r[i_ck]||"").trim(),
+      date:String(r[i_dt]||"").slice(0,10), fee:num(r[i_fee]),
+      points: r[i_pt]===""?null:num(r[i_pt]),
+      rank:   r[i_pl]===""?null:num(r[i_pl]),
+      fieldSize: i_fld>=0 ? num(r[i_fld]) : null,
+      payoutCash:cash, payoutTicket:ticket,
+      payout: cash + (DB.settings.ticketsAtFace ? ticket : 0)
+    };
+    const ex = byId[eid];
+    if(ex){ Object.assign(ex, res); updated++; continue; }
+    const fmt = formatFromHistory(r[i_sp], r[i_gt]);
+    const gm = res.contest.match(/\(([A-Z]{2,4})\s*@\s*([A-Z]{2,4})\)/);
+    const e = Object.assign({
+      id:uid(), entryId:eid, format:fmt, sport:FORMATS[fmt].sport,
+      slate: gm ? `${gm[1]}@${gm[2]}` : "", lineup:[],
+      approach:"Untagged", source:"DK entry history", notes:""
+    }, res);
+    DB.entries.push(e); byId[eid]=e; added++;
+  }
+  return {added, updated, tickets};
+}
+
+/* Recompute payouts when the ticket-valuation setting changes. */
+function applyTicketSetting(){
+  DB.entries.forEach(e=>{
+    if(e.payoutCash==null) return;
+    e.payout = e.payoutCash + (DB.settings.ticketsAtFace ? (e.payoutTicket||0) : 0);
+  });
 }
 
 /* DK contest-standings export: Rank, EntryId, EntryName, TimeRemaining, Points */
@@ -679,18 +748,27 @@ function vImport(){
   const np = Object.keys(DB.players).length;
   return `<h2 class="sec">Import</h2>
   <p class="sub">Drop DraftKings files here in any order. Sport and format are detected from the roster slots, so NFL, MLB and NBA all land in the same ledger.</p>
-  <div class="panel"><div class="ph"><h4>1. Entries</h4><span class="note">${np} players known</span></div><div class="pb">
+  <div class="panel"><div class="ph"><h4>1. Entry history</h4><span class="note">the most complete source</span></div><div class="pb">
+    <p style="margin:0 0 12px;color:var(--ink-2);font-size:13px">The <b>contest entry history</b> export from your My Contests page on DraftKings. Every entry across every sport, with place, points, field size and winnings — everything but the lineups. Rows already in the ledger are updated in place, so results land on lineups you imported earlier.</p>
+    <div class="drop" data-kind="history"><strong>Drop the entry-history CSV, or click to choose</strong>
+      <span>draftkings-contest-entry-history.csv</span></div>
+    <label style="display:flex;align-items:center;gap:8px;margin-top:14px;font-size:13px;cursor:pointer">
+      <input type="checkbox" id="tixFace"> Count ticket winnings at face value
+    </label>
+    <p style="margin:6px 0 0;color:var(--ink-3);font-size:12px">DraftKings reports ticket prizes separately from cash. Counting them at face treats a $5 satellite ticket as $5 won; turning it off values tickets at zero and measures cash only.</p>
+  </div></div>
+  <div class="panel"><div class="ph"><h4>2. Lineups</h4><span class="note">${np} players known</span></div><div class="pb">
     <p style="margin:0 0 12px;color:var(--ink-2);font-size:13px">Your filled DraftKings entries export. Most DK exports carry the salary table alongside the entries, so one file usually does both jobs. Re-importing the same file will not duplicate anything.</p>
     <div class="drop" data-kind="entries"><strong>Drop the entries CSV, or click to choose</strong>
       <span>DKEntries.csv — reads Entry ID, contest, fee and every roster slot</span></div>
   </div></div>
-  <div class="panel"><div class="ph"><h4>2. Salaries</h4></div><div class="pb">
+  <div class="panel"><div class="ph"><h4>3. Salaries</h4></div><div class="pb">
     <p style="margin:0 0 12px;color:var(--ink-2);font-size:13px">Only needed when the entries file arrives without its salary table, or when you want the player pool loaded ahead of lock.</p>
     <div class="drop" data-kind="salaries"><strong>Drop a DKSalaries CSV</strong>
       <span>Fills in position, team, opponent and salary for each player ID</span></div>
   </div></div>
-  <div class="panel"><div class="ph"><h4>3. Results</h4></div><div class="pb">
-    <p style="margin:0 0 12px;color:var(--ink-2);font-size:13px">The contest-standings export DraftKings offers once a contest completes. Matched to your entries by Entry ID. Payouts often are not in that file — type them on the Entries view and the ROI figures follow.</p>
+  <div class="panel"><div class="ph"><h4>4. Standings</h4></div><div class="pb">
+    <p style="margin:0 0 12px;color:var(--ink-2);font-size:13px">Only needed when you want a single contest's results before the entry history catches up. Matched by Entry ID. Standings files usually omit payouts, so prefer the entry-history export above.</p>
     <div class="drop" data-kind="results"><strong>Drop a contest-standings CSV</strong>
       <span>Reads rank and points, and payout when the file carries one</span></div>
   </div></div>
@@ -775,12 +853,21 @@ function wire(){
   if(pick) pick.onchange = () => { if(pick.files[0]) handleFile(pick.files[0], pick.dataset.kind); };
 
   const b = id => document.getElementById(id);
+  const tix = b("tixFace");
+  if(tix){
+    tix.checked = !!DB.settings.ticketsAtFace;
+    tix.onchange = async () => {
+      DB.settings.ticketsAtFace = tix.checked;
+      applyTicketSetting(); await persist(); render();
+      toast(tix.checked ? "Tickets counted at face value" : "Tickets counted as zero");
+    };
+  }
   if(b("expJson")) b("expJson").onclick = () => download(`dfs-ledger-${new Date().toISOString().slice(0,10)}.json`, JSON.stringify(DB,null,2), "application/json");
   if(b("expCsv"))  b("expCsv").onclick = exportCsv;
   if(b("impBtn"))  b("impBtn").onclick = mergeJson;
   if(b("wipe"))    b("wipe").onclick = async () => {
     if(!confirm("Delete every entry and player from this browser? Export a backup first — this cannot be undone.")) return;
-    DB = { entries:[], players:{}, meta:{created:new Date().toISOString()} };
+    DB = { entries:[], players:{}, settings:{ticketsAtFace:true}, meta:{created:new Date().toISOString()} };
     await persist(); render(); toast("Ledger cleared");
   };
 }
@@ -791,7 +878,16 @@ function handleFile(file, kind){
     let rows;
     try{ rows = parseCSV(fr.result); }
     catch(e){ toast("Couldn't read that file as CSV"); return; }
-    if(kind==="salaries"){
+    if(kind==="history"){
+      const h = ingestHistory(rows);
+      if(h.err){ toast(h.err); return; }
+      await persist(); render();
+      const bits=[];
+      if(h.added) bits.push(`${h.added} added`);
+      if(h.updated) bits.push(`${h.updated} updated`);
+      if(h.tickets) bits.push(`${h.tickets} ticket prizes`);
+      toast(bits.length ? bits.join(" · ") : "Nothing to import");
+    } else if(kind==="salaries"){
       const n = ingestPlayers(rows);
       if(!n){ toast("No salary table found in that file"); return; }
       await persist(); render(); toast(`${n} players loaded`);
@@ -861,11 +957,25 @@ async function mergeJson(){
   }
 
   const have = new Set(DB.entries.map(e=>e.entryId));
-  let added=0, legacy=0;
+  let added=0, legacy=0, tagged=0;
   rows.forEach(raw=>{
     if(!raw || typeof raw !== "object") return;
     let e = raw;
-    if(looksLegacyMLB(raw)){ e = convertLegacy(raw); legacy++; }
+    if(looksLegacyMLB(raw)){
+      /* If this contest is already in the ledger from the DK entry
+         history, don't add it twice — just carry the approach tag over. */
+      const hit = DB.entries.find(x =>
+        !x._tagged && x.approach === "Untagged" &&
+        x.date === raw.date &&
+        x.contest === String(raw.contest||"").trim() &&
+        Math.abs((x.points||0) - num(raw.pts)) < 0.011 &&
+        Math.abs((x.fee||0) - num(raw.fee != null ? raw.fee : raw.invested)) < 0.011);
+      if(hit){
+        hit.approach = String(raw.tag||"").trim() || "Untagged";
+        hit._tagged = true; tagged++; return;
+      }
+      e = convertLegacy(raw); legacy++;
+    }
     if(!e || !e.entryId || have.has(e.entryId)) return;
     if(!e.id) e.id = uid();
     if(!e.lineup) e.lineup = [];
@@ -874,10 +984,14 @@ async function mergeJson(){
     if(!e.approach) e.approach = "Untagged";
     DB.entries.push(e); have.add(e.entryId); added++;
   });
+  DB.entries.forEach(x=>{ delete x._tagged; });
   if(inc && inc.players) Object.assign(DB.players, inc.players);
   await persist(); ta.value=""; render();
-  toast(added ? `${added} merged${legacy?` · ${legacy} converted from the MLB tracker`:""}`
-              : "Nothing new to merge");
+  const bits=[];
+  if(added)  bits.push(`${added} merged`);
+  if(tagged) bits.push(`${tagged} tagged onto existing entries`);
+  if(legacy) bits.push(`${legacy} converted`);
+  toast(bits.length ? bits.join(" · ") : "Nothing new to merge");
 }
 
 document.querySelectorAll(".railbtn").forEach(b=>{
@@ -887,6 +1001,9 @@ document.querySelectorAll(".railbtn").forEach(b=>{
 (async function init(){
   const saved = await Store.load();
   if(saved && saved.entries) DB = Object.assign(DB, saved);
+  if(!DB.settings) DB.settings = { ticketsAtFace:true };
+  /* re-register any formats that only exist because of an import */
+  DB.entries.forEach(e=>{ if(!FORMATS[e.format]) registerFormat(e.format, e.sport||"?", e.format); });
   render();
 })();
 </script>
