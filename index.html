@@ -121,7 +121,7 @@ label.fld input,label.fld select{width:100%}
 <div class="shell">
   <nav class="rail">
     <div class="brand"><h1>DFS Ledger</h1><p id="brandSub">no entries yet</p>
-      <p style="margin:4px 0 0;font-size:10.5px;color:#4d5761;font-family:var(--mono)">build 2026-09-10c</p></div>
+      <p style="margin:4px 0 0;font-size:10.5px;color:#4d5761;font-family:var(--mono)">build 2026-09-10d</p></div>
     <div class="railgroup">Track</div>
     <button class="railbtn on" data-view="dash">Overview <span class="cnt" id="cDash"></span></button>
     <button class="railbtn" data-view="entries">Entries <span class="cnt" id="cEntries"></span></button>
@@ -353,8 +353,8 @@ function ingestEntries(rows){
   }
   if(!slotCols.length) return {added:0,skipped:0,err:"No roster slot columns found."};
 
-  const existing = new Set(DB.entries.map(e=>e.entryId));
-  let added=0, skipped=0, empty=0;
+  const existing = new Map(DB.entries.map(e=>[e.entryId, e]));
+  let added=0, updated=0, empty=0;
   for(let i=hi+1;i<rows.length;i++){
     const r=rows[i]; const eid=(r[0]||"").trim();
     if(!/^\d+$/.test(eid)) continue;
@@ -369,20 +369,33 @@ function ingestEntries(rows){
                     game:p?p.game:"", salary:p?slotSalary(p,s.name):0 });
     }
     if(!lineup.length){ empty++; continue; }
-    if(existing.has(eid)){ skipped++; continue; }
     const fmt = detectFormat(slotCols.map(s=>s.name), lineup.map(p=>p.pos));
     const gi = lineup.map(p=>p.game).find(Boolean) || "";
     const dm = gi.match(/(\d{2})\/(\d{2})\/(\d{4})/);
-    DB.entries.push({
-      id: uid(), entryId: eid, contest:(r[1]||"").trim(), contestId:(r[2]||"").trim(),
-      fee: num(r[3]), format: fmt, sport: FORMATS[fmt]?FORMATS[fmt].sport:"?",
-      slate: gi.split(" ")[0] || "",
+    const core = {
+      contest:(r[1]||"").trim(), contestId:(r[2]||"").trim(), fee: num(r[3]),
+      format: fmt, sport: FORMATS[fmt]?FORMATS[fmt].sport:"?",
+      slate: gi.split(" ")[0] || "", lineup
+    };
+    /* Re-importing a file refreshes what that file knows. Results,
+       payouts and approach tags live elsewhere and are left alone.
+       Only overwrite the date when the file actually carries a game
+       time — otherwise a re-import would stamp today onto old entries. */
+    const ex = existing.get(eid);
+    if(ex){
+      Object.assign(ex, core);
+      if(dm) ex.date = `${dm[3]}-${dm[1]}-${dm[2]}`;
+      updated++; continue;
+    }
+    DB.entries.push(Object.assign({
+      id: uid(), entryId: eid,
       date: dm ? `${dm[3]}-${dm[1]}-${dm[2]}` : today(),
-      lineup, points:null, rank:null, fieldSize:null, payout:null, source:"DK entries", notes:""
-    });
+      points:null, rank:null, fieldSize:null, payout:null,
+      approach:"Untagged", source:"DK entries", notes:""
+    }, core));
     added++;
   }
-  return {added, skipped, empty};
+  return {added, updated, empty};
 }
 
 /* DK "contest entry history" export from the My Contests page.
@@ -916,7 +929,7 @@ function handleFile(file, kind){
       if(r.err){ toast(r.err); return; }
       await persist(); render();
       const bits = [`${r.added} added`];
-      if(r.skipped) bits.push(`${r.skipped} already here`);
+      if(r.updated) bits.push(`${r.updated} refreshed`);
       if(r.empty)   bits.push(`${r.empty} unfilled`);
       if(p)         bits.push(`${p} players`);
       toast(bits.join(" · "));
