@@ -120,7 +120,8 @@ label.fld input,label.fld select{width:100%}
 <body>
 <div class="shell">
   <nav class="rail">
-    <div class="brand"><h1>DFS Ledger</h1><p id="brandSub">no entries yet</p></div>
+    <div class="brand"><h1>DFS Ledger</h1><p id="brandSub">no entries yet</p>
+      <p style="margin:4px 0 0;font-size:10.5px;color:#4d5761;font-family:var(--mono)">build 2026-09-10c</p></div>
     <div class="railgroup">Track</div>
     <button class="railbtn on" data-view="dash">Overview <span class="cnt" id="cDash"></span></button>
     <button class="railbtn" data-view="entries">Entries <span class="cnt" id="cEntries"></span></button>
@@ -623,7 +624,7 @@ function vEntries(){
   if(!DB.entries.length) return `<h2 class="sec">Entries</h2><div class="panel"><div class="empty">
     <strong>No entries yet</strong>Import a DraftKings entries file first.</div></div>`;
   return `<h2 class="sec">Entries</h2>
-  <p class="sub">Points, rank and payout are editable — click a cell and type. Structure tags are derived from the lineup, not typed.</p>
+  <p class="sub">Date, points, rank and payout are editable — click a cell and type. Dates use YYYY-MM-DD. Structure tags are derived from the lineup, not typed.</p>
   ${filterBar("fEnt")}
   <div class="panel" style="margin-top:14px"><div class="ph">
       <h4>${list.length} ${list.length===1?"entry":"entries"}</h4>
@@ -643,7 +644,7 @@ function vEntries(){
         : `<span style="color:var(--ink-3)">not recorded</span>`;
       const nv = net(e);
       return `<tr data-id="${e.id}">
-        <td style="white-space:nowrap">${esc(e.date)}</td>
+        <td style="white-space:nowrap" contenteditable data-fld="date" data-type="text">${esc(e.date)}</td>
         <td title="${esc(e.contest)}">${esc(e.contest.length>26?e.contest.slice(0,26)+"…":e.contest)}</td>
         <td>${esc(f?f.label:e.format)}</td>
         <td style="max-width:340px;font-size:12px;line-height:1.35">${lu}</td>
@@ -833,7 +834,14 @@ function wire(){
       const id = td.closest("tr").dataset.id, fld = td.dataset.fld;
       const e = DB.entries.find(x=>x.id===id); if(!e) return;
       const raw = td.textContent.trim();
-      e[fld] = raw==="" ? null : num(raw);
+      if(td.dataset.type === "text"){
+        if(fld === "date" && raw && !/^\d{4}-\d{2}-\d{2}$/.test(raw)){
+          toast("Dates need to look like 2026-09-10"); render(); return;
+        }
+        e[fld] = raw;
+      } else {
+        e[fld] = raw==="" ? null : num(raw);
+      }
       await persist(); render();
     };
     td.onkeydown = ev => { if(ev.key==="Enter"){ ev.preventDefault(); td.blur(); } };
