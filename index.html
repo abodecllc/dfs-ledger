@@ -121,7 +121,7 @@ label.fld input,label.fld select{width:100%}
 <div class="shell">
   <nav class="rail">
     <div class="brand"><h1>DFS Ledger</h1><p id="brandSub">no entries yet</p>
-      <p style="margin:4px 0 0;font-size:10.5px;color:#4d5761;font-family:var(--mono)">build 2026-09-10d</p></div>
+      <p style="margin:4px 0 0;font-size:10.5px;color:#4d5761;font-family:var(--mono)">build 11</p></div>
     <div class="railgroup">Track</div>
     <button class="railbtn on" data-view="dash">Overview <span class="cnt" id="cDash"></span></button>
     <button class="railbtn" data-view="entries">Entries <span class="cnt" id="cEntries"></span></button>
@@ -252,7 +252,7 @@ function detectFormat(slotHeaders, positions){
 }
 
 /* ---------- state ---------- */
-let DB = { entries:[], players:{}, settings:{ticketsAtFace:true},
+let DB = { entries:[], players:{}, settings:{ticketsAtFace:true, lastApproach:""},
            meta:{created:new Date().toISOString()} };
 const uid = () => Math.random().toString(36).slice(2,10);
 /* Local calendar date. toISOString() is UTC, which rolls over during
@@ -264,6 +264,7 @@ const today = () => {
 const money = n => (n<0?"-":"")+"$"+Math.abs(n).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
 const money0 = n => (n<0?"-":"")+"$"+Math.abs(n).toLocaleString(undefined,{maximumFractionDigits:0});
 const pct = n => (n>0?"+":"")+n.toFixed(1)+"%";
+const APPROACHES = () => [...new Set(DB.entries.map(e=>e.approach).filter(a=>a && a!=="Untagged"))].sort();
 const esc = s => String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
 function toast(msg){
@@ -338,7 +339,7 @@ function slotSalary(p, slotName){
 }
 
 /* DK entries export: Entry ID, Contest Name, Contest ID, Entry Fee, then slot columns */
-function ingestEntries(rows){
+function ingestEntries(rows, approach){
   let hdr=null, hi=-1;
   for(let i=0;i<rows.length;i++){
     const low = rows[i].map(x=>x.toLowerCase().trim());
@@ -385,13 +386,18 @@ function ingestEntries(rows){
     if(ex){
       Object.assign(ex, core);
       if(dm) ex.date = `${dm[3]}-${dm[1]}-${dm[2]}`;
+      if(approach) ex.approach = approach;
       updated++; continue;
     }
     DB.entries.push(Object.assign({
       id: uid(), entryId: eid,
-      date: dm ? `${dm[3]}-${dm[1]}-${dm[2]}` : today(),
+      /* No game time in the file means we don't know the slate date.
+         Guessing "today" is wrong for anything imported after the
+         game — leave it empty and let the entry-history import or a
+         manual edit fill it in. */
+      date: dm ? `${dm[3]}-${dm[1]}-${dm[2]}` : "",
       points:null, rank:null, fieldSize:null, payout:null,
-      approach:"Untagged", source:"DK entries", notes:""
+      approach: approach || "Untagged", source:"DK entries", notes:""
     }, core));
     added++;
   }
@@ -633,33 +639,39 @@ function vDash(){
 }
 
 function vEntries(){
-  const list = filtered().slice().sort((a,b)=> b.date.localeCompare(a.date) || (b.points||0)-(a.points||0));
+  const list = filtered().slice().sort((a,b)=>
+    (a.date?1:0)-(b.date?1:0) || b.date.localeCompare(a.date) || (b.points||0)-(a.points||0));
   if(!DB.entries.length) return `<h2 class="sec">Entries</h2><div class="panel"><div class="empty">
     <strong>No entries yet</strong>Import a DraftKings entries file first.</div></div>`;
   return `<h2 class="sec">Entries</h2>
-  <p class="sub">Date, points, rank and payout are editable — click a cell and type. Dates use YYYY-MM-DD. Structure tags are derived from the lineup, not typed.</p>
+  <p class="sub">Date, approach, points, rank and payout are editable — click a cell and type. Dates use YYYY-MM-DD. Use the filters plus Apply to tag a whole block at once. Structure tags are derived from the lineup, not typed.</p>
   ${filterBar("fEnt")}
+  ${(()=>{const n=list.filter(e=>!e.date).length; return n?`<div class="warn" style="margin-top:14px">${n} ${n===1?"entry has":"entries have"} no date — the file they came from carried no game time. Drop an entry-history CSV to fill them in from DraftKings, or type the date in the highlighted cells. Undated entries drop out of any date-filtered view.</div>`:"";})()}
   <div class="panel" style="margin-top:14px"><div class="ph">
       <h4>${list.length} ${list.length===1?"entry":"entries"}</h4>
-      <span class="note">Lineup column shows captain first for showdown</span></div>
+      <div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap">
+        <span class="note">Set approach for all ${list.length} in view:</span>
+        <input type="text" id="bulkAppr" list="apprList2" placeholder="Apex Cash…" style="min-width:150px">
+        <datalist id="apprList2">${APPROACHES().map(a=>`<option value="${esc(a)}"></option>`).join("")}</datalist>
+        <button class="btn ghost" id="bulkApprGo">Apply</button>
+      </div></div>
     <div class="tscroll"><table class="thin"><thead><tr>
-      <th>Date</th><th>Contest</th><th>Format</th><th>Lineup</th><th>Structure</th>
+      <th>Date</th><th>Contest</th><th>Format</th><th>Approach</th><th>Lineup</th><th>Structure</th>
       <th class="num">Fee</th><th class="num">Pts</th><th class="num">Rank</th>
       <th class="num">Payout</th><th class="num">Net</th><th></th></tr></thead><tbody>
     ${list.map(e=>{
       const t = tagsFor(e);
       const f = FORMATS[e.format];
-      const chips = e.lineup.length
-        ? (f?f.tagOrder:[]).slice(0,3).map(k=>t[k]?`<span class="tag">${esc(t[k])}</span>`:"").join(" ")
-        : (e.approach ? `<span class="tag hot">${esc(e.approach)}</span>` : "");
+      const chips = (f?f.tagOrder:[]).slice(0,3).map(k=>t[k]?`<span class="tag">${esc(t[k])}</span>`:"").join(" ");
       const lu = e.lineup.length
         ? e.lineup.map(p=>p.slot.toUpperCase()==="CPT"?`<b>${esc(p.name)}</b>`:esc(p.name)).join(", ")
         : `<span style="color:var(--ink-3)">not recorded</span>`;
       const nv = net(e);
       return `<tr data-id="${e.id}">
-        <td style="white-space:nowrap" contenteditable data-fld="date" data-type="text">${esc(e.date)}</td>
+        <td style="white-space:nowrap${e.date?"":";background:var(--accent-soft)"}" contenteditable data-fld="date" data-type="text">${e.date?esc(e.date):""}</td>
         <td title="${esc(e.contest)}">${esc(e.contest.length>26?e.contest.slice(0,26)+"…":e.contest)}</td>
         <td>${esc(f?f.label:e.format)}</td>
+        <td contenteditable data-fld="approach" data-type="text" style="min-width:96px">${esc(e.approach||"")}</td>
         <td style="max-width:340px;font-size:12px;line-height:1.35">${lu}</td>
         <td>${chips}</td>
         <td class="num">${money(e.fee||0)}</td>
@@ -779,6 +791,11 @@ function vImport(){
   </div></div>
   <div class="panel"><div class="ph"><h4>2. Lineups</h4><span class="note">${np} players known</span></div><div class="pb">
     <p style="margin:0 0 12px;color:var(--ink-2);font-size:13px">Your filled DraftKings entries export. Most DK exports carry the salary table alongside the entries, so one file usually does both jobs. Re-importing the same file will not duplicate anything.</p>
+    <label class="fld" style="max-width:340px"><span>Tag these lineups as</span>
+      <input type="text" id="apprTag" list="apprList" placeholder="Apex Cash, Apex Upside, Manual…">
+      <datalist id="apprList">${APPROACHES().map(a=>`<option value="${esc(a)}"></option>`).join("")}</datalist>
+    </label>
+    <p style="margin:-4px 0 12px;color:var(--ink-3);font-size:12px">How this block of lineups was built. DraftKings doesn't record it, so set it here before dropping the file — it becomes the main axis on Structure ROI. Leave it blank to file them as Untagged.</p>
     <div class="drop" data-kind="entries"><strong>Drop the entries CSV, or click to choose</strong>
       <span>DKEntries.csv — reads Entry ID, contest, fee and every roster slot</span></div>
   </div></div>
@@ -879,7 +896,19 @@ function wire(){
   });
   if(pick) pick.onchange = () => { if(pick.files[0]) handleFile(pick.files[0], pick.dataset.kind); };
 
+  const bulkBtn = document.getElementById("bulkApprGo");
+  if(bulkBtn) bulkBtn.onclick = async () => {
+    const v = document.getElementById("bulkAppr").value.trim();
+    if(!v){ toast("Type an approach first"); return; }
+    const rows = filtered();
+    if(!confirm(`Set the approach to "${v}" on ${rows.length} ${rows.length===1?"entry":"entries"}? This overwrites any tag already on them.`)) return;
+    rows.forEach(e=>{ e.approach = v; });
+    await persist(); render(); toast(`${rows.length} tagged as ${v}`);
+  };
+
   const b = id => document.getElementById(id);
+  const ap = b("apprTag");
+  if(ap && !ap.value && DB.settings.lastApproach) ap.value = DB.settings.lastApproach;
   const tix = b("tixFace");
   if(tix){
     tix.checked = !!DB.settings.ticketsAtFace;
@@ -924,12 +953,16 @@ function handleFile(file, kind){
       await persist(); render();
       toast(r.matched ? `${r.matched} entries updated` : "No Entry IDs in that file matched your entries");
     } else {
+      const ap = document.getElementById("apprTag");
+      const approach = ap ? ap.value.trim() : "";
+      if(approach){ DB.settings.lastApproach = approach; }
       const p = ingestPlayers(rows);
-      const r = ingestEntries(rows);
+      const r = ingestEntries(rows, approach);
       if(r.err){ toast(r.err); return; }
       await persist(); render();
       const bits = [`${r.added} added`];
       if(r.updated) bits.push(`${r.updated} refreshed`);
+      if(approach)  bits.push(`tagged ${approach}`);
       if(r.empty)   bits.push(`${r.empty} unfilled`);
       if(p)         bits.push(`${p} players`);
       toast(bits.join(" · "));
