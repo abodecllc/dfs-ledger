@@ -254,6 +254,12 @@ function detectFormat(slotHeaders, positions){
 let DB = { entries:[], players:{}, settings:{ticketsAtFace:true},
            meta:{created:new Date().toISOString()} };
 const uid = () => Math.random().toString(36).slice(2,10);
+/* Local calendar date. toISOString() is UTC, which rolls over during
+   US evening games and dates them a day forward. */
+const today = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+};
 const money = n => (n<0?"-":"")+"$"+Math.abs(n).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
 const money0 = n => (n<0?"-":"")+"$"+Math.abs(n).toLocaleString(undefined,{maximumFractionDigits:0});
 const pct = n => (n>0?"+":"")+n.toFixed(1)+"%";
@@ -370,7 +376,7 @@ function ingestEntries(rows){
       id: uid(), entryId: eid, contest:(r[1]||"").trim(), contestId:(r[2]||"").trim(),
       fee: num(r[3]), format: fmt, sport: FORMATS[fmt]?FORMATS[fmt].sport:"?",
       slate: gi.split(" ")[0] || "",
-      date: dm ? `${dm[3]}-${dm[1]}-${dm[2]}` : new Date().toISOString().slice(0,10),
+      date: dm ? `${dm[3]}-${dm[1]}-${dm[2]}` : today(),
       lineup, points:null, rank:null, fieldSize:null, payout:null, source:"DK entries", notes:""
     });
     added++;
@@ -862,7 +868,7 @@ function wire(){
       toast(tix.checked ? "Tickets counted at face value" : "Tickets counted as zero");
     };
   }
-  if(b("expJson")) b("expJson").onclick = () => download(`dfs-ledger-${new Date().toISOString().slice(0,10)}.json`, JSON.stringify(DB,null,2), "application/json");
+  if(b("expJson")) b("expJson").onclick = () => download(`dfs-ledger-${today()}.json`, JSON.stringify(DB,null,2), "application/json");
   if(b("expCsv"))  b("expCsv").onclick = exportCsv;
   if(b("impBtn"))  b("impBtn").onclick = mergeJson;
   if(b("wipe"))    b("wipe").onclick = async () => {
@@ -934,7 +940,7 @@ function exportCsv(){
       ...Array.from({length:maxSlots},(_,i)=>{const p=e.lineup[i];return p?`${p.slot}: ${p.name}`:"";})
     ].map(q).join(","));
   });
-  download(`dfs-ledger-${new Date().toISOString().slice(0,10)}.csv`, lines.join("\n"), "text/csv");
+  download(`dfs-ledger-${today()}.csv`, lines.join("\n"), "text/csv");
 }
 async function mergeJson(){
   const ta = document.getElementById("impJson");
