@@ -127,7 +127,7 @@ label.fld input,label.fld select{width:100%}
 <div class="shell">
   <nav class="rail">
     <div class="brand"><h1>DFS Ledger</h1><p id="brandSub">no entries yet</p>
-      <p style="margin:4px 0 0;font-size:10.5px;color:#4d5761;font-family:var(--mono)">build 12</p></div>
+      <p style="margin:4px 0 0;font-size:10.5px;color:#4d5761;font-family:var(--mono)">build 13</p></div>
     <div class="railgroup">Track</div>
     <button class="railbtn on" data-view="dash">Overview <span class="cnt" id="cDash"></span></button>
     <button class="railbtn" data-view="entries">Entries <span class="cnt" id="cEntries"></span></button>
@@ -190,6 +190,7 @@ const teamSplit = lu => {
 const gamesUsed = lu => new Set(lu.map(p=>p.game||p.team)).size;
 
 function nflClassicTags(lu){
+  if(!teamsResolved(lu)) return {};
   const qb = lu.find(p=>p.pos==="QB");
   let shape = "No QB", bringBack = "—";
   if (qb){
@@ -208,20 +209,34 @@ function nflClassicTags(lu){
            "Games used": String(gamesUsed(lu)), "Teams used": String(new Set(lu.map(p=>p.team)).size) };
 }
 function showdownTags(lu){
+  if(!teamsResolved(lu)) return {};
   const c = lu.find(p=>p.slot==="CPT") || lu[0];
   const qbs = lu.filter(p=>p.pos==="QB").length;
   return { "Captain position": c ? c.pos : "?", "Captain team": c ? (c.team||"?") : "?",
            "Team split": teamSplit(lu), "Both QBs": qbs>=2 ? "Yes" : "No" };
 }
+/* A lineup whose players never resolved against a salary file has no
+   teams on it. Saying nothing is right; inventing a 10-0 split is not. */
+const teamsResolved = lu => lu.length && lu.every(p => p.team);
+
 function mlbTags(lu){
-  const bats = lu.filter(p=>p.pos!=="P" && p.pos!=="SP" && p.pos!=="RP");
-  const byTeam = cnt(bats, p=>p.team||"?");
-  const sizes = Object.values(byTeam).sort((a,b)=>b-a);
-  const top = sizes[0]||0, second = sizes[1]||0;
-  return { "Primary stack": `${top}-man`, "Secondary stack": second>=2 ? `${second}-man` : "None",
-           "Stack pattern": `${top}-${second}`, "Pitchers": String(lu.length-bats.length) };
+  if(!teamsResolved(lu)) return {};
+  const isPitcher = p => ["P","SP","RP"].includes(String(p.pos||"").toUpperCase())
+                      || /^P\d?$/.test(String(p.slot||"").toUpperCase());
+  const bats = lu.filter(p=>!isPitcher(p));
+  if(!bats.length) return {};
+  /* Full partition, biggest first: 5-3, 4-4, 4-2-2, 3-3-2. */
+  const sizes = Object.values(cnt(bats, p=>p.team)).sort((a,b)=>b-a);
+  return {
+    "Stack pattern": sizes.join("-"),
+    "Primary stack": `${sizes[0]}-man`,
+    "Secondary stack": sizes[1] >= 2 ? `${sizes[1]}-man` : "None",
+    "Teams used": String(sizes.length),
+    "Pitchers": String(lu.length - bats.length)
+  };
 }
 function nbaTags(lu){
+  if(!teamsResolved(lu)) return {};
   return { "Teams used": String(new Set(lu.map(p=>p.team)).size),
            "Games used": String(gamesUsed(lu)) };
 }
@@ -234,7 +249,7 @@ const FORMATS = {
   "mlb-showdown": { sport:"MLB", label:"MLB Showdown", slots:["CPT","UTIL","UTIL","UTIL","UTIL","UTIL"],
     tags: showdownTags, tagOrder:["Captain position","Team split","Captain team"] },
   "mlb-classic": { sport:"MLB", label:"MLB Classic", slots:["P","P","C","1B","2B","3B","SS","OF","OF","OF"],
-    tags: mlbTags, tagOrder:["Primary stack","Secondary stack","Stack pattern"] },
+    tags: mlbTags, tagOrder:["Stack pattern","Primary stack","Secondary stack","Teams used"] },
   "nba-showdown": { sport:"NBA", label:"NBA Showdown", slots:["CPT","UTIL","UTIL","UTIL","UTIL","UTIL"],
     tags: showdownTags, tagOrder:["Captain position","Team split","Captain team"] },
   "nba-classic": { sport:"NBA", label:"NBA Classic", slots:["PG","SG","SF","PF","C","G","F","UTIL"],
@@ -698,12 +713,15 @@ function vStructure(){
   const list = filtered();
   if(!list.length) return `<h2 class="sec">Structure ROI</h2><div class="panel"><div class="empty">
     <strong>Nothing to analyse yet</strong>Import entries, then record results.</div></div>`;
-  const withLineups = list.filter(e=>e.lineup.length);
-  const fmts = [...new Set(withLineups.map(e=>e.format))];
-  const bare = list.length - withLineups.length;
+  const readable = list.filter(e=>e.lineup.length && Object.keys(tagsFor(e)).length);
+  const withLineups = readable;
+  const fmts = [...new Set(readable.map(e=>e.format))];
+  const bare = list.filter(e=>!e.lineup.length).length;
+  const unresolved = list.filter(e=>e.lineup.length && !Object.keys(tagsFor(e)).length).length;
   let html = `<h2 class="sec">Structure ROI</h2>
   <p class="sub">How each build shape actually performed. Structure is read off the lineup automatically, so this fills in as you import — nothing to tag by hand.</p>
   ${filterBar("fStruct")}
+  ${unresolved?`<div class="warn" style="margin-top:14px">${unresolved} ${unresolved===1?"lineup has":"lineups have"} players that never resolved to a team, so their structure can't be read. That happens when an entries file is imported without its salary table. Drop the matching DKSalaries CSV into slot 3, then re-import the entries file — the lineups fill in and these appear here.</div>`:""}
   ${bare?`<div class="warn" style="margin-top:14px">${bare} ${bare===1?"entry has":"entries have"} no lineup recorded — imported history, most likely. They count toward bankroll and approach ROI but cannot be broken down by build shape.</div>`:""}
   <div class="warn" style="margin-top:14px">One season of NFL gives roughly twenty slates. These splits will not reach significance inside a year — read them as a process audit, not proof that a shape is profitable.</div>`;
   const appr = groupBy(list, e=>e.approach);
