@@ -127,7 +127,7 @@ label.fld input,label.fld select{width:100%}
 <div class="shell">
   <nav class="rail">
     <div class="brand"><h1>DFS Ledger</h1><p id="brandSub">no entries yet</p>
-      <p style="margin:4px 0 0;font-size:10.5px;color:#4d5761;font-family:var(--mono)">build 13</p></div>
+      <p style="margin:4px 0 0;font-size:10.5px;color:#4d5761;font-family:var(--mono)">build 14</p></div>
     <div class="railgroup">Track</div>
     <button class="railbtn on" data-view="dash">Overview <span class="cnt" id="cDash"></span></button>
     <button class="railbtn" data-view="entries">Entries <span class="cnt" id="cEntries"></span></button>
@@ -225,15 +225,22 @@ function mlbTags(lu){
                       || /^P\d?$/.test(String(p.slot||"").toUpperCase());
   const bats = lu.filter(p=>!isPitcher(p));
   if(!bats.length) return {};
-  /* Full partition, biggest first: 5-3, 4-4, 4-2-2, 3-3-2. */
-  const sizes = Object.values(cnt(bats, p=>p.team)).sort((a,b)=>b-a);
-  return {
-    "Stack pattern": sizes.join("-"),
-    "Primary stack": `${sizes[0]}-man`,
-    "Secondary stack": sizes[1] >= 2 ? `${sizes[1]}-man` : "None",
-    "Teams used": String(sizes.length),
-    "Pitchers": String(lu.length - bats.length)
-  };
+  /* Full partition, biggest first: 5-3, 4-4, 4-2-2, 3-3-2. Stack sizes
+     and team count are all readable off this one string, so it is the
+     only shape tag worth storing. */
+  const byTeam = cnt(bats, p=>p.team);
+  const ranked = Object.entries(byTeam).sort((a,b)=>b[1]-a[1]);
+  const out = { "Stack pattern": ranked.map(r=>r[1]).join("-") };
+
+  /* Orthogonal to the pattern: is the second stack the primary's
+     opponent? Chris has bring-backs in only 21-29% of winners, so it
+     is worth measuring rather than assuming. Needs opponent data. */
+  if(ranked.length > 1 && bats.every(p=>p.oppTeam)){
+    const primary = ranked[0][0];
+    const opp = (bats.find(p=>p.team===primary)||{}).oppTeam;
+    out["Bring-back"] = ranked.slice(1).some(r=>r[0]===opp) ? "Yes" : "No";
+  }
+  return out;
 }
 function nbaTags(lu){
   if(!teamsResolved(lu)) return {};
@@ -249,7 +256,7 @@ const FORMATS = {
   "mlb-showdown": { sport:"MLB", label:"MLB Showdown", slots:["CPT","UTIL","UTIL","UTIL","UTIL","UTIL"],
     tags: showdownTags, tagOrder:["Captain position","Team split","Captain team"] },
   "mlb-classic": { sport:"MLB", label:"MLB Classic", slots:["P","P","C","1B","2B","3B","SS","OF","OF","OF"],
-    tags: mlbTags, tagOrder:["Stack pattern","Primary stack","Secondary stack","Teams used"] },
+    tags: mlbTags, tagOrder:["Stack pattern","Bring-back"] },
   "nba-showdown": { sport:"NBA", label:"NBA Showdown", slots:["CPT","UTIL","UTIL","UTIL","UTIL","UTIL"],
     tags: showdownTags, tagOrder:["Captain position","Team split","Captain team"] },
   "nba-classic": { sport:"NBA", label:"NBA Classic", slots:["PG","SG","SF","PF","C","G","F","UTIL"],
