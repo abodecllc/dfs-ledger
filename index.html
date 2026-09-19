@@ -110,6 +110,13 @@ label.fld input,label.fld select{width:100%}
 .finding td.num{font-family:var(--mono)}
 .finding ol,.finding ul{margin:7px 0 0;padding-left:19px;color:var(--ink-2);font-size:13px}
 .finding li{margin-bottom:4px}
+.legend{display:flex;flex-wrap:wrap;gap:8px 18px;margin-top:12px;font-size:12.5px;color:var(--ink-2);align-items:center}
+.legend span{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.legend .sw{display:inline-block;width:13px;height:13px;border-radius:2px;flex:0 0 13px}
+.rangeseg{display:inline-flex;border:1px solid var(--rule-hard);border-radius:3px;overflow:hidden}
+.rangeseg button{border:0;border-radius:0;background:var(--panel);padding:4px 11px;font-size:12px;color:var(--ink-2);cursor:pointer}
+.rangeseg button+button{border-left:1px solid var(--rule)}
+.rangeseg button[aria-pressed="true"]{background:var(--ink);color:#fff;font-weight:600}
 .warn{background:#fdf3e3;border:1px solid #e8c894;padding:10px 13px;font-size:12.5px;margin-bottom:14px}
 @media(max-width:860px){
   .shell{flex-direction:column}
@@ -127,7 +134,7 @@ label.fld input,label.fld select{width:100%}
 <div class="shell">
   <nav class="rail">
     <div class="brand"><h1>DFS Ledger</h1><p id="brandSub">no entries yet</p>
-      <p style="margin:4px 0 0;font-size:10.5px;color:#4d5761;font-family:var(--mono)">build 19</p></div>
+      <p style="margin:4px 0 0;font-size:10.5px;color:#4d5761;font-family:var(--mono)">build 21</p></div>
     <div class="railgroup">Track</div>
     <button class="railbtn on" data-view="dash">Overview <span class="cnt" id="cDash"></span></button>
     <button class="railbtn" data-view="entries">Entries <span class="cnt" id="cEntries"></span></button>
@@ -280,7 +287,7 @@ function detectFormat(slotHeaders, positions){
 }
 
 /* ---------- state ---------- */
-let DB = { entries:[], players:{}, settings:{ticketsAtFace:true, lastApproach:""},
+let DB = { entries:[], players:{}, settings:{ticketsAtFace:true, lastApproach:"", trendRange:"1M"},
            meta:{created:new Date().toISOString()} };
 const uid = () => Math.random().toString(36).slice(2,10);
 /* Local calendar date. toISOString() is UTC, which rolls over during
@@ -306,6 +313,16 @@ function contestClass(e){
   if(/satellite|qualifier/.test(c)) return "WTA";
   if(/double up|double-up|50-50|50\/50/.test(c)) return "Cash";
   return "GPP";
+}
+/* A showdown IS one game, so its slate is that matchup. For classic the
+   lineup spans the whole slate, and DK's only slate marker is the window
+   suffix on the contest name. */
+const SLATE_WINDOW = /\((Early|Afternoon|Night|Late Night|Late|Turbo|Express|Primetime)\)/i;
+function slateLabel(e){
+  const f = FORMATS[e.format];
+  if(f && /showdown/i.test(f.label||"") && e.slate) return e.slate;
+  const m = String(e.contest||"").match(SLATE_WINDOW);
+  return `${e.sport} ${m ? m[1] : "Main"}`;
 }
 const esc = s => String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
@@ -716,8 +733,15 @@ const SERIES = [
 const weekOf = d => { const x=new Date(d+"T12:00:00"); x.setDate(x.getDate()-x.getDay());
   return `${x.getFullYear()}-${String(x.getMonth()+1).padStart(2,"0")}-${String(x.getDate()).padStart(2,"0")}`; };
 
-function vTrend(list){
+const TREND_RANGES = { "1M":30, "3M":91, "6M":183, "1Y":365, "All":0 };
+function vTrend(all){
   const CLIP=150;
+  const key = DB.settings.trendRange || "1M";
+  const days = TREND_RANGES[key] != null ? TREND_RANGES[key] : 30;
+  const cutoff = days ? dayOffset(-days) : "";
+  const list = days ? all.filter(e=>e.date && e.date >= cutoff) : all;
+  const seg = `<div class="rangeseg">${Object.keys(TREND_RANGES).map(k=>
+      `<button data-range="${k}" aria-pressed="${k===key}">${k}</button>`).join("")}</div>`;
   const pts={}, weeks=new Set();
   list.forEach(e=>{
     if(e.payout==null || !e.date || !e.fee) return;
@@ -728,8 +752,8 @@ function vTrend(list){
     pts[k].f += e.fee; pts[k].w += e.payout;
   });
   const wk=[...weeks].sort();
-  if(wk.length<2) return `<div class="panel"><div class="ph"><h4>ROI trend (weekly)</h4></div>
-    <div class="empty">Not enough settled weeks to plot yet.</div></div>`;
+  if(wk.length<2) return `<div class="panel"><div class="ph"><h4>ROI trend (weekly)</h4>${seg}</div>
+    <div class="empty">Not enough settled weeks in this range to plot. Widen the range above.</div></div>`;
 
   const W=920,H=300,L=52,R=12,TOP=14,B=40, iw=W-L-R, ih=H-TOP-B;
   const x = i => L + (wk.length===1 ? iw/2 : i*iw/(wk.length-1));
@@ -760,8 +784,8 @@ function vTrend(list){
     });
   });
   svg+="</svg>";
-  return `<div class="panel"><div class="ph"><h4>ROI trend (weekly)</h4>
-      <span class="note">Hover a point for the exact figure. Weeks beyond ±150% are clipped.</span></div>
+  return `<div class="panel"><div class="ph"><h4>ROI trend (weekly)</h4>${seg}</div>
+    <div class="ph" style="border-top:0;padding-top:0"><span class="note">Hover a point for the exact figure. Weeks beyond ±150% are clipped.</span></div>
     <div class="pb">${svg}
       <div class="legend">${drawn.map(([n,c])=>`<span><span class="sw" style="background:${c}"></span>${esc(n)}</span>`).join("")}</div>
     </div></div>`;
@@ -892,12 +916,17 @@ function vExposure(){
   const all  = listFor("exposure");
   if(!all.length) return `<h2 class="sec">Exposure</h2>${filterBar("fExp")}${windowBar("exposure",0)}
     <div class="panel"><div class="empty"><strong>Nothing in this window</strong>Widen the dates or clear the filters.</div></div>`;
-  const slates = groupBy(list, e=>`${e.date||"undated"} · ${e.slate||e.sport}`);
+  const slates = groupBy(list, e=>`${e.date||"undated"} · ${slateLabel(e)}`);
   const keys = Object.keys(slates).sort().reverse();
+  /* Exposure needs lineups, which only arrive with a pre-lock entries
+     file. Say so when results exist past the newest lineup. */
+  const newestLineup = keys.length ? keys[0].slice(0,10) : "";
+  const newerResults = all.filter(e=>e.date && e.date > newestLineup).length;
   return `<h2 class="sec">Exposure</h2>
-  <p class="sub">Player and build-shape exposure per slate. Captain share is broken out where the format has one.</p>
+  <p class="sub">Player and build-shape exposure per slate. Captain share is broken out where the format has one. Only slates where you imported the pre-lock lineups file appear here — entries that arrived through the entry-history import have no rosters to read.</p>
   ${filterBar("fExp")}
   ${windowBar("exposure", all.length)}
+  ${newerResults?`<div class="warn" style="margin-top:14px">Newest lineups on file are from <b>${newestLineup}</b>, but ${newerResults.toLocaleString()} ${newerResults===1?"entry":"entries"} in this window is dated later. Those came in through the entry-history import, which carries no rosters — import the lineups CSV before lock to get them here.</div>`:""}
   ${!keys.length?`<div class="panel" style="margin-top:14px"><div class="empty"><strong>No lineups in this window</strong>Exposure needs recorded lineups. Entries that arrived through the history import don't have them.</div></div>`:""}
   ${keys.map(k=>{
     const es = slates[k]; const n = es.length;
@@ -1116,6 +1145,9 @@ function wire(){
   });
   const cl = document.querySelector("[data-clear]");
   if(cl) cl.onclick = () => { Object.keys(F).forEach(k=>F[k]=""); F.showAll=false; render(); };
+  document.querySelectorAll("[data-range]").forEach(b=>b.onclick = async () => {
+    DB.settings.trendRange = b.dataset.range; await persist(); render();
+  });
   const sa = document.querySelector("[data-showall]");
   if(sa) sa.onclick = () => { F.showAll = true; render(); };
 
