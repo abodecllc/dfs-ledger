@@ -127,7 +127,7 @@ label.fld input,label.fld select{width:100%}
 <div class="shell">
   <nav class="rail">
     <div class="brand"><h1>DFS Ledger</h1><p id="brandSub">no entries yet</p>
-      <p style="margin:4px 0 0;font-size:10.5px;color:#4d5761;font-family:var(--mono)">build 15</p></div>
+      <p style="margin:4px 0 0;font-size:10.5px;color:#4d5761;font-family:var(--mono)">build 16</p></div>
     <div class="railgroup">Track</div>
     <button class="railbtn on" data-view="dash">Overview <span class="cnt" id="cDash"></span></button>
     <button class="railbtn" data-view="entries">Entries <span class="cnt" id="cEntries"></span></button>
@@ -894,6 +894,7 @@ function vImport(){
     <p style="margin:0 0 12px;color:var(--ink-2);font-size:13px">The <b>contest entry history</b> export from your My Contests page on DraftKings. Every entry across every sport, with place, points, field size and winnings — everything but the lineups. Rows already in the ledger are updated in place, so results land on lineups you imported earlier.</p>
     <div class="drop" data-kind="history"><strong>Drop the entry-history CSV, or click to choose</strong>
       <span>draftkings-contest-entry-history.csv</span></div>
+    <p style="margin:10px 0 0;color:var(--ink-3);font-size:12px">This file carries no approach tag — DraftKings doesn't know how a lineup was built. Entries that arrive here are filed as Untagged. Tag them with the lineups file below, or in bulk from the Entries view.</p>
     <label style="display:flex;align-items:center;gap:8px;margin-top:14px;font-size:13px;cursor:pointer">
       <input type="checkbox" id="tixFace"> Count ticket winnings at face value
     </label>
@@ -1047,6 +1048,8 @@ function handleFile(file, kind){
     try{ rows = parseCSV(fr.result); }
     catch(e){ toast("Couldn't read that file as CSV"); return; }
     if(kind==="history"){
+      const sel = document.getElementById("apprTag");
+      const wanted = sel ? sel.value.trim() : "";
       const h = ingestHistory(rows);
       if(h.err){ toast(h.err); return; }
       await persist(); render();
@@ -1055,6 +1058,10 @@ function handleFile(file, kind){
       if(h.updated) bits.push(`${h.updated} updated`);
       if(h.tickets) bits.push(`${h.tickets} ticket prizes`);
       toast(bits.length ? bits.join(" · ") : "Nothing to import");
+      /* The approach picker belongs to the lineups drop zone. Saying so
+         beats letting someone believe a whole import got tagged. */
+      if(wanted && h.added)
+        setTimeout(()=>toast(`Not tagged — "${wanted}" only applies to the lineups file. Tag these in bulk from the Entries view.`), 2900);
     } else if(kind==="salaries"){
       const n = ingestPlayers(rows);
       if(!n){ toast("No salary table found in that file"); return; }
