@@ -127,7 +127,7 @@ label.fld input,label.fld select{width:100%}
 <div class="shell">
   <nav class="rail">
     <div class="brand"><h1>DFS Ledger</h1><p id="brandSub">no entries yet</p>
-      <p style="margin:4px 0 0;font-size:10.5px;color:#4d5761;font-family:var(--mono)">build 17</p></div>
+      <p style="margin:4px 0 0;font-size:10.5px;color:#4d5761;font-family:var(--mono)">build 18</p></div>
     <div class="railgroup">Track</div>
     <button class="railbtn on" data-view="dash">Overview <span class="cnt" id="cDash"></span></button>
     <button class="railbtn" data-view="entries">Entries <span class="cnt" id="cEntries"></span></button>
@@ -538,6 +538,31 @@ function ingestResults(rows){
   return {matched, field};
 }
 
+/* Lineups snapshot player details at import time. If the salary table
+   arrived later, those lineups are still holding blanks — walk them
+   again against whatever is in the pool now. */
+function relinkLineups(){
+  let fixed=0, stillBlank=0; const missing=new Set();
+  DB.entries.forEach(e=>{
+    if(!e.lineup || !e.lineup.length) return;
+    let changed=false, blank=false;
+    e.lineup.forEach(s=>{
+      const p = s.playerId ? DB.players[s.playerId] : null;
+      if(p){
+        if(s.team!==p.team || s.pos!==p.pos){ changed=true; }
+        s.pos=p.pos; s.team=p.team; s.oppTeam=p.oppTeam; s.game=p.game;
+        s.salary = slotSalary(p, s.slot);
+        if(!s.name || /^\d+$/.test(s.name)) s.name = p.name;
+      } else if(!s.team){
+        blank=true; if(s.playerId) missing.add(s.playerId);
+      }
+    });
+    if(changed) fixed++;
+    if(blank) stillBlank++;
+  });
+  return {fixed, stillBlank, missing:missing.size};
+}
+
 /* ============ LEGACY MLB TRACKER CONVERSION ============
    The old MLB tracker stored one row per entry with a result but no
    lineup. Those rows still carry bankroll, contest and approach-tag
@@ -742,7 +767,17 @@ function vStructure(){
   let html = `<h2 class="sec">Structure ROI</h2>
   <p class="sub">How each build shape actually performed. Structure is read off the lineup automatically, so this fills in as you import — nothing to tag by hand.</p>
   ${filterBar("fStruct")}
-  ${unresolved?`<div class="warn" style="margin-top:14px">${unresolved} ${unresolved===1?"lineup has":"lineups have"} players that never resolved to a team, so their structure can't be read. That happens when an entries file is imported without its salary table. Drop the matching DKSalaries CSV into slot 3, then re-import the entries file — the lineups fill in and these appear here.</div>`:""}
+  ${(()=>{
+    if(!unresolved) return "";
+    const bad = list.filter(e=>e.lineup.length && !Object.keys(tagsFor(e)).length);
+    const byFmt = groupBy(bad, e=>FORMATS[e.format]?FORMATS[e.format].label:e.format);
+    const ids = new Set(); let slots=0, blanks=0;
+    bad.forEach(e=>e.lineup.forEach(s=>{ slots++; if(!s.team){ blanks++; if(s.playerId) ids.add(s.playerId); } }));
+    return `<div class="warn" style="margin-top:14px">
+      <b>${unresolved} ${unresolved===1?"lineup":"lineups"} excluded</b> — structure needs every player linked to a team, and ${blanks} of ${slots} roster slots in these are unlinked (${ids.size} distinct player IDs not in the pool).
+      <div style="margin-top:6px">${Object.entries(byFmt).sort((a,b)=>b[1].length-a[1].length).map(([k,v])=>`${esc(k)}: ${v.length}`).join(" · ")}</div>
+      <div style="margin-top:6px">Load the DKSalaries file for those slates, then use <b>Re-link lineups</b> on the Import tab.</div></div>`;
+  })()}
   ${bare?`<div class="warn" style="margin-top:14px">${bare} ${bare===1?"entry has":"entries have"} no lineup recorded — imported history, most likely. They count toward bankroll and approach ROI but cannot be broken down by build shape.</div>`:""}
   <div class="warn" style="margin-top:14px">One season of NFL gives roughly twenty slates. These splits will not reach significance inside a year — read them as a process audit, not proof that a shape is profitable.</div>`;
   const appr = groupBy(list, e=>e.approach);
@@ -919,6 +954,10 @@ function vImport(){
     <p style="margin:0 0 12px;color:var(--ink-2);font-size:13px">Only needed when the entries file arrives without its salary table, or when you want the player pool loaded ahead of lock.</p>
     <div class="drop" data-kind="salaries"><strong>Drop a DKSalaries CSV</strong>
       <span>Fills in position, team, opponent and salary for each player ID</span></div>
+    <div style="margin-top:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <button class="btn ghost" id="relink">Re-link lineups to the player pool</button>
+      <span class="note">Lineups imported before their salary file was loaded are stored with blank teams, so they can't be read for structure. This walks every lineup again against the ${np} players now loaded.</span>
+    </div>
   </div></div>
   <div class="panel"><div class="ph"><h4>4. Standings</h4></div><div class="pb">
     <p style="margin:0 0 12px;color:var(--ink-2);font-size:13px">Only needed when you want a single contest's results before the entry history catches up. Matched by Entry ID. Standings files usually omit payouts, so prefer the entry-history export above.</p>
@@ -1012,6 +1051,15 @@ function wire(){
   });
   if(pick) pick.onchange = () => { if(pick.files[0]) handleFile(pick.files[0], pick.dataset.kind); };
 
+  const rl = document.getElementById("relink");
+  if(rl) rl.onclick = async () => {
+    const r = relinkLineups();
+    await persist(); render();
+    const parts = [`${r.fixed} lineups re-linked`];
+    if(r.stillBlank) parts.push(`${r.stillBlank} still incomplete (${r.missing} player IDs not in the pool)`);
+    toast(parts.join(" · "));
+  };
+
   const bulkBtn = document.getElementById("bulkApprGo");
   if(bulkBtn) bulkBtn.onclick = async () => {
     const v = document.getElementById("bulkAppr").value.trim();
@@ -1068,7 +1116,9 @@ function handleFile(file, kind){
     } else if(kind==="salaries"){
       const n = ingestPlayers(rows);
       if(!n){ toast("No salary table found in that file"); return; }
-      await persist(); render(); toast(`${n} players loaded`);
+      const rl = relinkLineups();
+      await persist(); render();
+      toast(`${n} players loaded${rl.fixed?` · ${rl.fixed} lineups re-linked`:""}`);
     } else if(kind==="results"){
       const r = ingestResults(rows);
       if(r.err){ toast(r.err); return; }
