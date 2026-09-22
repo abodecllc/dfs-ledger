@@ -134,7 +134,7 @@ label.fld input,label.fld select{width:100%}
 <div class="shell">
   <nav class="rail">
     <div class="brand"><h1>DFS Ledger</h1><p id="brandSub">no entries yet</p>
-      <p style="margin:4px 0 0;font-size:10.5px;color:#4d5761;font-family:var(--mono)">build 21</p></div>
+      <p style="margin:4px 0 0;font-size:10.5px;color:#4d5761;font-family:var(--mono)">build 22</p></div>
     <div class="railgroup">Track</div>
     <button class="railbtn on" data-view="dash">Overview <span class="cnt" id="cDash"></span></button>
     <button class="railbtn" data-view="entries">Entries <span class="cnt" id="cEntries"></span></button>
@@ -163,23 +163,82 @@ label.fld input,label.fld select{width:100%}
 /* ---------- storage adapter: works on GitHub Pages, local file,
               or inside a Claude artifact ---------- */
 const KEY = "dfs_ledger_v1";
+const IDB_NAME = "dfs_ledger", IDB_STORE = "kv";
+
+/* localStorage caps at roughly 5 MB per origin and every app on
+   <user>.github.io shares it. A few thousand entries with lineups blows
+   through that, and the failure is a silent non-save. IndexedDB is the
+   same origin, same privacy, but sized for this. */
+function idbOpen(){
+  return new Promise((res, rej) => {
+    if(!self.indexedDB) return rej(new Error("no indexedDB"));
+    const r = indexedDB.open(IDB_NAME, 1);
+    r.onupgradeneeded = () => { if(!r.result.objectStoreNames.contains(IDB_STORE)) r.result.createObjectStore(IDB_STORE); };
+    r.onsuccess = () => res(r.result);
+    r.onerror   = () => rej(r.error);
+  });
+}
+function idbReq(mode, fn){
+  return idbOpen().then(db => new Promise((res, rej) => {
+    const tx = db.transaction(IDB_STORE, mode);
+    const rq = fn(tx.objectStore(IDB_STORE));
+    rq.onsuccess = () => res(rq.result);
+    rq.onerror   = () => rej(rq.error);
+  }));
+}
+
 const Store = {
+  mode: "idb",
   async load(){
+    /* Artifact host first, if we're running inside one. */
     try{
-      if (window.storage && window.storage.get){
-        try{ const r = await window.storage.get(KEY); return r ? JSON.parse(r.value) : null; }
-        catch(e){ return null; }
+      if(window.storage && window.storage.get){
+        this.mode = "artifact";
+        const r = await window.storage.get(KEY);
+        return r ? JSON.parse(r.value) : null;
       }
-      const raw = localStorage.getItem(KEY);
-      return raw ? JSON.parse(raw) : null;
-    }catch(e){ console.error("load failed",e); return null; }
+    }catch(e){ return null; }
+
+    let data = null;
+    try{ const raw = await idbReq("readonly", s => s.get(KEY)); if(raw) data = JSON.parse(raw); }
+    catch(e){ this.mode = "local"; }
+
+    /* One-time lift out of localStorage, then release that space back
+       to the other apps sharing this origin. */
+    if(!data){
+      try{
+        const legacy = localStorage.getItem(KEY);
+        if(legacy){
+          data = JSON.parse(legacy);
+          if(this.mode === "idb"){
+            try{ await idbReq("readwrite", s => s.put(legacy, KEY)); localStorage.removeItem(KEY); }
+            catch(e){ this.mode = "local"; }
+          }
+        }
+      }catch(e){}
+    }
+    return data;
   },
   async save(data){
     const s = JSON.stringify(data);
     try{
-      if (window.storage && window.storage.set){ await window.storage.set(KEY, s); return true; }
-      localStorage.setItem(KEY, s); return true;
-    }catch(e){ console.error("save failed",e); toast("Couldn't save — storage may be full or blocked"); return false; }
+      if(window.storage && window.storage.set){ await window.storage.set(KEY, s); return true; }
+    }catch(e){}
+    if(this.mode === "idb"){
+      try{ await idbReq("readwrite", st => st.put(s, KEY)); return true; }
+      catch(e){ this.mode = "local"; }
+    }
+    try{ localStorage.setItem(KEY, s); return true; }
+    catch(e){
+      toast("Couldn't save — browser storage is full. Export a backup from the Backup tab before doing anything else.");
+      return false;
+    }
+  },
+  async usage(){
+    try{
+      const est = await navigator.storage.estimate();
+      return { used: est.usage, quota: est.quota };
+    }catch(e){ return null; }
   }
 };
 
@@ -1102,7 +1161,7 @@ function vBackup(){
   return `<h2 class="sec">Backup</h2>
   <p class="sub">The ledger lives in this browser only. Export before you clear site data, switch machines, or trust anything important to it.</p>
   <div class="panel"><div class="ph"><h4>Export</h4></div><div class="pb">
-    <p style="margin:0 0 12px;color:var(--ink-2);font-size:13px">${DB.entries.length} entries, ${Object.keys(DB.players).length} players.</p>
+    <p style="margin:0 0 12px;color:var(--ink-2);font-size:13px">${DB.entries.length.toLocaleString()} entries, ${Object.keys(DB.players).length.toLocaleString()} players. <span id="usage" class="note"></span></p>
     <button class="btn" id="expJson">Download JSON backup</button>
     <button class="btn ghost" id="expCsv">Download entries as CSV</button>
   </div></div>
@@ -1188,6 +1247,13 @@ function wire(){
   });
   if(pick) pick.onchange = () => { if(pick.files[0]) handleFile(pick.files[0], pick.dataset.kind); };
 
+  const us = document.getElementById("usage");
+  if(us) Store.usage().then(u=>{
+    const MB = n => (n/1048576).toFixed(1)+" MB";
+    us.textContent = u && u.quota
+      ? `Storage: ${MB(u.used)} used of about ${MB(u.quota)} available (${Store.mode==="idb"?"IndexedDB":Store.mode==="artifact"?"host storage":"localStorage"}).`
+      : `Storage backend: ${Store.mode}.`;
+  }).catch(()=>{});
   const rl = document.getElementById("relink");
   if(rl) rl.onclick = async () => {
     const r = relinkLineups();
