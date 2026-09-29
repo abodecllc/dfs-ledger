@@ -134,7 +134,7 @@ label.fld input,label.fld select{width:100%}
 <div class="shell">
   <nav class="rail">
     <div class="brand"><h1>DFS Ledger</h1><p id="brandSub">no entries yet</p>
-      <p style="margin:4px 0 0;font-size:10.5px;color:#4d5761;font-family:var(--mono)">build 22</p></div>
+      <p style="margin:4px 0 0;font-size:10.5px;color:#4d5761;font-family:var(--mono)">build 23</p></div>
     <div class="railgroup">Track</div>
     <button class="railbtn on" data-view="dash">Overview <span class="cnt" id="cDash"></span></button>
     <button class="railbtn" data-view="entries">Entries <span class="cnt" id="cEntries"></span></button>
@@ -255,6 +255,16 @@ const teamSplit = lu => {
 };
 const gamesUsed = lu => new Set(lu.map(p=>p.game||p.team)).size;
 
+/* DraftKings calls it CPT, FanDuel calls it "MVP - 1.5X Points", and
+   FanDuel's other sports use CPT/STAR/PRO. Match on the word. */
+const isCaptainSlot = s => /\b(CPT|CAPTAIN|MVP)\b/i.test(String(s||""));
+/* FanDuel writes team defense as D, DraftKings as DST. */
+function normPos(p){
+  const v = String(p||"").toUpperCase().trim();
+  if(v==="D"||v==="DEF"||v==="D/ST") return "DST";
+  return v;
+}
+
 function nflClassicTags(lu){
   if(!teamsResolved(lu)) return {};
   const qb = lu.find(p=>p.pos==="QB");
@@ -276,7 +286,7 @@ function nflClassicTags(lu){
 }
 function showdownTags(lu){
   if(!teamsResolved(lu)) return {};
-  const c = lu.find(p=>p.slot==="CPT") || lu[0];
+  const c = lu.find(p=>isCaptainSlot(p.slot)) || lu[0];
   const qbs = lu.filter(p=>p.pos==="QB").length;
   return { "Captain position": c ? c.pos : "?", "Captain team": c ? (c.team||"?") : "?",
            "Team split": teamSplit(lu), "Both QBs": qbs>=2 ? "Yes" : "No" };
@@ -332,8 +342,8 @@ const FORMATS = {
 /* Detect format from the slot header + the positions present. */
 function detectFormat(slotHeaders, positions){
   const slots = slotHeaders.map(s=>s.toUpperCase().trim());
-  const pos = new Set(positions.map(p=>(p||"").toUpperCase()));
-  const isShowdown = slots.includes("CPT") || slots.includes("MVP") || slots.length===6;
+  const pos = new Set(positions.map(normPos));
+  const isShowdown = slots.some(isCaptainSlot) || slots.length===6;
   const nfl = pos.has("QB")||pos.has("DST")||pos.has("TE");
   const mlb = pos.has("SP")||pos.has("P")||pos.has("1B")||pos.has("SS")||pos.has("OF")||pos.has("C");
   const nba = pos.has("PG")||pos.has("SG")||pos.has("SF")||pos.has("PF");
@@ -452,8 +462,9 @@ function ingestPlayers(rows){
     let opp = "";
     const m = game.match(/^([A-Z]{2,4})@([A-Z]{2,4})/);
     if(m) opp = (m[1]===team) ? m[2] : m[1];
-    DB.players[id] = { id, name:(r[c+2]||"").trim(), pos:(r[c]||"").trim(),
-      slotType:(r[c+4]||"").trim(), salary:num(r[c+5]), game, team, oppTeam:opp };
+    DB.players[id] = { id, name:(r[c+2]||"").trim(), pos:normPos(r[c]),
+      slotType:(r[c+4]||"").trim(), salary:num(r[c+5]), game, team, oppTeam:opp,
+      cptSalary:null, site:"DK" };
     n++;
   }
   return n;
@@ -462,10 +473,13 @@ function ingestPlayers(rows){
 /* DK prices the captain slot as its own player row, so only apply the
    multiplier when a base (FLEX) row has been dropped into a captain slot. */
 function slotSalary(p, slotName){
-  const capSlot = ["CPT","MVP"].includes(String(slotName).toUpperCase());
-  const capRow  = ["CPT","MVP"].includes(String(p.slotType||"").toUpperCase());
-  if (capSlot && !capRow) return Math.round(p.salary*1.5);
-  return p.salary;
+  const capSlot = isCaptainSlot(slotName);
+  const capRow  = isCaptainSlot(p.slotType);
+  if(!capSlot || capRow) return p.salary;
+  /* FanDuel ships the premium price as its own column; DK prices the
+     captain as a separate player row, so only multiply when neither
+     source has already done it. */
+  return p.cptSalary != null ? p.cptSalary : Math.round(p.salary*1.5);
 }
 
 /* DK entries export: Entry ID, Contest Name, Contest ID, Entry Fee, then slot columns */
@@ -504,7 +518,7 @@ function ingestEntries(rows, approach){
     const gi = lineup.map(p=>p.game).find(Boolean) || "";
     const dm = gi.match(/(\d{2})\/(\d{2})\/(\d{4})/);
     const core = {
-      contest:(r[1]||"").trim(), contestId:(r[2]||"").trim(), fee: num(r[3]),
+      site:"DK", contest:(r[1]||"").trim(), contestId:(r[2]||"").trim(), fee: num(r[3]),
       format: fmt, sport: FORMATS[fmt]?FORMATS[fmt].sport:"?",
       slate: gi.split(" ")[0] || "", lineup
     };
@@ -585,7 +599,7 @@ function ingestHistory(rows){
     const fmt = formatFromHistory(r[i_sp], r[i_gt]);
     const gm = res.contest.match(/\(([A-Z]{2,4})\s*@\s*([A-Z]{2,4})\)/);
     const e = Object.assign({
-      id:uid(), entryId:eid, format:fmt, sport:FORMATS[fmt].sport,
+      id:uid(), entryId:eid, format:fmt, sport:FORMATS[fmt].sport, site:"DK",
       slate: gm ? `${gm[1]}@${gm[2]}` : "", lineup:[],
       approach:"Untagged", source:"DK entry history", notes:""
     }, res);
@@ -652,6 +666,125 @@ function relinkLineups(){
   return {fixed, stillBlank, missing:missing.size};
 }
 
+
+/* ============ FANDUEL ============
+   FanDuel's players list and DraftKings' salary file carry the same
+   facts under different headers. Both land in one player pool; FD ids
+   are already namespaced by their slate group (134724-69531), so they
+   cannot collide with DK's bare numeric ids. */
+function fdPlayerCols(rows){
+  for(let i=0;i<rows.length;i++){
+    const low = rows[i].map(x=>x.toLowerCase().trim());
+    if(low.includes("id") && low.includes("position") && low.includes("salary")
+       && (low.includes("nickname") || low.includes("last name")))
+      return {hdr:low, i};
+  }
+  return null;
+}
+/* FanDuel puts no date inside the file, only in its name:
+   FanDuel-NFL-2026_EDT-09_EDT-28_EDT-134724-players-list.csv */
+function fdDateFromName(name){
+  const s = String(name||"");
+  let m = s.match(/(\d{4})\D+(\d{2})\D+(\d{2})\D+\d+-players/i)
+       || s.match(/(\d{4})[-_](\d{2})[-_](\d{2})/);
+  if(!m) return "";
+  const [_,y,mo,d] = m;
+  return (+mo>=1 && +mo<=12 && +d>=1 && +d<=31) ? `${y}-${mo}-${d}` : "";
+}
+function ingestFDPlayers(rows, filename){
+  const loc = fdPlayerCols(rows);
+  if(!loc) return 0;
+  const H = loc.hdr, C = n => H.indexOf(n);
+  const i_id=C("id"), i_pos=C("position"), i_sal=C("salary"),
+        i_mvp=H.findIndex(h=>/mvp|cpt|captain/.test(h) && /salary/.test(h)),
+        i_nick=C("nickname"), i_first=C("first name"), i_last=C("last name"),
+        i_game=C("game"), i_team=C("team"), i_opp=C("opponent"),
+        i_inj=C("injury indicator"), i_rp=C("roster position");
+  const slateDate = fdDateFromName(filename);
+  let n=0;
+  for(let r=loc.i+1;r<rows.length;r++){
+    const row=rows[r]; const id=(row[i_id]||"").trim();
+    if(!id || !/^[\w-]+$/.test(id) || id.toLowerCase()==="id") continue;
+    if(i_sal<0 || !row[i_sal]) continue;
+    const name = (i_nick>=0 && row[i_nick]) ? row[i_nick].trim()
+               : [row[i_first],row[i_last]].filter(Boolean).join(" ").trim();
+    DB.players[id] = {
+      id, name, pos: normPos(row[i_pos]), slotType:"FLEX",
+      salary: num(row[i_sal]),
+      cptSalary: i_mvp>=0 && row[i_mvp] ? num(row[i_mvp]) : null,
+      game:(row[i_game]||"").trim(), team:(row[i_team]||"").trim(),
+      oppTeam:(row[i_opp]||"").trim(),
+      status: (row[i_inj]||"").trim().toUpperCase()==="O" ? "OUT" : "",
+      rosterPos:(row[i_rp]||"").trim(), site:"FD", slateDate
+    };
+    n++;
+  }
+  return n;
+}
+
+/* SplashPlay / FanDuel entries export:
+   entry_id, contest_id, contest_name, entry_fee, then one column per slot. */
+function isFDEntries(rows){
+  return rows.some(r => String(r[0]||"").toLowerCase().trim()==="entry_id");
+}
+function ingestFDEntries(rows, approach){
+  let hi=-1, hdr=null;
+  for(let i=0;i<rows.length;i++){
+    if(String(rows[i][0]||"").toLowerCase().trim()==="entry_id"){ hdr=rows[i]; hi=i; break; }
+  }
+  if(!hdr) return {err:"Not a FanDuel entries file (needs an entry_id header)."};
+  const low = hdr.map(x=>x.toLowerCase().trim());
+  const i_fee = low.indexOf("entry_fee");
+  const firstSlot = Math.max(i_fee+1, 4);
+  const slotCols=[];
+  for(let c=firstSlot;c<hdr.length;c++){
+    const h=(hdr[c]||"").trim(); if(!h) break;
+    slotCols.push({c, name:h});
+  }
+  if(!slotCols.length) return {err:"No roster slot columns found in that FanDuel file."};
+
+  const existing = new Map(DB.entries.map(e=>[e.entryId, e]));
+  let added=0, updated=0, empty=0;
+  for(let i=hi+1;i<rows.length;i++){
+    const r=rows[i]; const raw=(r[0]||"").trim();
+    if(!raw || raw.toLowerCase()==="entry_id") continue;
+    const eid = "fd-"+raw;
+    const lineup=[];
+    for(const s of slotCols){
+      const pid=(r[s.c]||"").trim(); if(!pid) continue;
+      const p = DB.players[pid];
+      lineup.push({ slot:s.name, playerId:pid, name:p?p.name:pid,
+        pos:p?p.pos:"", team:p?p.team:"", oppTeam:p?p.oppTeam:"",
+        game:p?p.game:"", salary:p?slotSalary(p,s.name):0 });
+    }
+    if(!lineup.length){ empty++; continue; }
+    const fmt = detectFormat(slotCols.map(s=>s.name), lineup.map(p=>p.pos));
+    const withP = lineup.map(p=>DB.players[p.playerId]).find(Boolean);
+    const gi = lineup.map(p=>p.game).find(Boolean) || "";
+    const core = {
+      site:"FD", contest:(r[2]||"").trim(), contestId:(r[1]||"").trim(),
+      fee: i_fee>=0 ? num(r[i_fee]) : 0,
+      format: fmt, sport: FORMATS[fmt]?FORMATS[fmt].sport:"?",
+      slate: gi || "", lineup
+    };
+    const ex = existing.get(eid);
+    if(ex){
+      Object.assign(ex, core);
+      if(withP && withP.slateDate) ex.date = withP.slateDate;
+      if(approach) ex.approach = approach;
+      updated++; continue;
+    }
+    DB.entries.push(Object.assign({
+      id: uid(), entryId: eid,
+      date: withP && withP.slateDate ? withP.slateDate : "",
+      points:null, rank:null, fieldSize:null, payout:null,
+      approach: approach || "Untagged", source:"FanDuel entries", notes:""
+    }, core));
+    added++;
+  }
+  return {added, updated, empty};
+}
+
 /* ============ LEGACY MLB TRACKER CONVERSION ============
    The old MLB tracker stored one row per entry with a result but no
    lineup. Those rows still carry bankroll, contest and approach-tag
@@ -709,7 +842,7 @@ function groupBy(list, fn){
 <script>
 "use strict";
 /* ============ FILTER STATE ============ */
-const F = { sport:"", format:"", contest:"", from:"", to:"", showAll:false };
+const F = { site:"", sport:"", format:"", contest:"", from:"", to:"", showAll:false };
 /* Entries and Exposure are working views — yesterday and today by
    default. Overview and Structure stay all-time. */
 function listFor(view){
@@ -727,6 +860,7 @@ function windowBar(view, shown){
 }
 function filtered(){
   return DB.entries.filter(e=>
+    (!F.site   || (e.site||"DK")===F.site) &&
     (!F.sport  || e.sport===F.sport) &&
     (!F.format || e.format===F.format) &&
     (!F.contest|| e.contest===F.contest) &&
@@ -736,13 +870,15 @@ function filtered(){
 const uniq = fn => [...new Set(DB.entries.map(fn).filter(Boolean))].sort();
 
 function filterBar(id){
+  const sites = uniq(e=>e.site||"DK");
   return `<div class="filters" id="${id}">
+    ${sites.length>1?`<select data-f="site"><option value="">Both sites</option>${sites.map(s=>`<option${F.site===s?" selected":""}>${esc(s)}</option>`).join("")}</select>`:""}
     <select data-f="sport"><option value="">All sports</option>${uniq(e=>e.sport).map(s=>`<option${F.sport===s?" selected":""}>${esc(s)}</option>`).join("")}</select>
     <select data-f="format"><option value="">All formats</option>${uniq(e=>e.format).map(s=>`<option value="${esc(s)}"${F.format===s?" selected":""}>${esc(FORMATS[s]?FORMATS[s].label:s)}</option>`).join("")}</select>
     <select data-f="contest"><option value="">All contests</option>${uniq(e=>e.contest).map(s=>`<option value="${esc(s)}"${F.contest===s?" selected":""}>${esc(s.length>44?s.slice(0,44)+"…":s)}</option>`).join("")}</select>
     <input type="date" data-f="from" value="${F.from}" title="From date">
     <input type="date" data-f="to" value="${F.to}" title="To date">
-    ${(F.sport||F.format||F.contest||F.from||F.to)?'<button class="btn ghost" data-clear="1">Clear</button>':""}
+    ${(F.site||F.sport||F.format||F.contest||F.from||F.to)?'<button class="btn ghost" data-clear="1">Clear</button>':""}
   </div>`;
 }
 
@@ -855,6 +991,7 @@ function vDash(){
   if(!DB.entries.length) return `<h2 class="sec">Overview</h2>
     <div class="panel"><div class="empty"><strong>No entries yet</strong>
     Import a DraftKings entries file to get started. Go to Import.</div></div>`;
+  const bySite  = groupBy(list, e=>e.site||"DK");
   const bySport = groupBy(list, e=>e.sport);
   const byFormat = groupBy(list, e=>FORMATS[e.format]?FORMATS[e.format].label:e.format);
   const byApproach = groupBy(list, e=>e.approach);
@@ -869,6 +1006,7 @@ function vDash(){
   ${filterBar("fDash")}
   ${unsettled?`<div class="warn" style="margin-top:14px">${unsettled} ${unsettled===1?"entry has":"entries have"} no payout recorded yet, so they sit outside every ROI figure. Import a contest-standings file or type payouts in on the Entries view.</div>`:"<div style='height:14px'></div>"}
   ${vTrend(list)}
+  ${Object.keys(bySite).length>1?`<div class="panel"><div class="ph"><h4>By site</h4></div>${roiTable(bySite,"Site")}</div>`:""}
   <div class="panel"><div class="ph"><h4>By sport</h4></div>${roiTable(bySport,"Sport")}</div>
   <div class="panel"><div class="ph"><h4>By format</h4></div>${roiTable(byFormat,"Format")}</div>
   ${Object.keys(byApproach).length ? `<div class="panel"><div class="ph"><h4>By approach</h4>
@@ -900,7 +1038,7 @@ function vEntries(){
         <button class="btn ghost" id="bulkApprGo">Apply</button>
       </div></div>
     <div class="tscroll"><table class="thin"><thead><tr>
-      <th>Date</th><th>Contest</th><th>Format</th><th>Approach</th><th>Lineup</th><th>Structure</th>
+      <th>Date</th><th>Site</th><th>Contest</th><th>Format</th><th>Approach</th><th>Lineup</th><th>Structure</th>
       <th class="num">Fee</th><th class="num">Pts</th><th class="num">Rank</th>
       <th class="num">Payout</th><th class="num">Net</th><th></th></tr></thead><tbody>
     ${list.map(e=>{
@@ -913,6 +1051,7 @@ function vEntries(){
       const nv = net(e);
       return `<tr data-id="${e.id}">
         <td style="white-space:nowrap${e.date?"":";background:var(--accent-soft)"}" contenteditable data-fld="date" data-type="text">${e.date?esc(e.date):""}</td>
+        <td>${esc(e.site||"DK")}</td>
         <td title="${esc(e.contest)}">${esc(e.contest.length>26?e.contest.slice(0,26)+"…":e.contest)}</td>
         <td>${esc(f?f.label:e.format)}</td>
         <td contenteditable data-fld="approach" data-type="text" style="min-width:96px">${esc(e.approach||"")}</td>
@@ -1118,7 +1257,7 @@ function vStrategy(){
 function vImport(){
   const np = Object.keys(DB.players).length;
   return `<h2 class="sec">Import</h2>
-  <p class="sub">Drop DraftKings files here in any order. Sport and format are detected from the roster slots, so NFL, MLB and NBA all land in the same ledger.</p>
+  <p class="sub">Drop DraftKings or FanDuel files here in any order. Site, sport and format are read from the file itself, so everything lands in one ledger.</p>
   <div class="panel"><div class="ph"><h4>1. Entry history</h4><span class="note">the most complete source</span></div><div class="pb">
     <p style="margin:0 0 12px;color:var(--ink-2);font-size:13px">The <b>contest entry history</b> export from your My Contests page on DraftKings. Every entry across every sport, with place, points, field size and winnings — everything but the lineups. Rows already in the ledger are updated in place, so results land on lineups you imported earlier.</p>
     <div class="drop" data-kind="history"><strong>Drop the entry-history CSV, or click to choose</strong>
@@ -1130,7 +1269,7 @@ function vImport(){
     <p style="margin:6px 0 0;color:var(--ink-3);font-size:12px">DraftKings reports ticket prizes separately from cash. Counting them at face treats a $5 satellite ticket as $5 won; turning it off values tickets at zero and measures cash only.</p>
   </div></div>
   <div class="panel"><div class="ph"><h4>2. Lineups</h4><span class="note">${np} players known</span></div><div class="pb">
-    <p style="margin:0 0 12px;color:var(--ink-2);font-size:13px">Your filled DraftKings entries export. Most DK exports carry the salary table alongside the entries, so one file usually does both jobs. Re-importing the same file will not duplicate anything.</p>
+    <p style="margin:0 0 12px;color:var(--ink-2);font-size:13px">Your filled entries export — DraftKings <code>DKEntries.csv</code>, or the FanDuel upload file you build in SplashPlay. Most DK exports carry the salary table alongside the entries, so one file does both jobs there. FanDuel files list player ids only, so load the players list below as well. Re-importing the same file will not duplicate anything.</p>
     <label class="fld" style="max-width:340px"><span>Tag these lineups as</span>
       <select id="apprTag">
         <option value="">— leave unchanged —</option>
@@ -1139,19 +1278,20 @@ function vImport(){
     </label>
     <p style="margin:-4px 0 12px;color:var(--ink-3);font-size:12px">How this block of lineups was built. DraftKings doesn't record it, so set it here before dropping the file — it becomes the main axis on Structure ROI. Pick "leave unchanged" to file new lineups as Untagged and leave any existing tags alone.</p>
     <div class="drop" data-kind="entries"><strong>Drop the entries CSV, or click to choose</strong>
-      <span>DKEntries.csv — reads Entry ID, contest, fee and every roster slot</span></div>
+      <span>Reads the entry id, contest, fee and every roster slot from either site</span></div>
   </div></div>
-  <div class="panel"><div class="ph"><h4>3. Salaries</h4></div><div class="pb">
-    <p style="margin:0 0 12px;color:var(--ink-2);font-size:13px">Only needed when the entries file arrives without its salary table, or when you want the player pool loaded ahead of lock.</p>
-    <div class="drop" data-kind="salaries"><strong>Drop a DKSalaries CSV</strong>
-      <span>Fills in position, team, opponent and salary for each player ID</span></div>
+  <div class="panel"><div class="ph"><h4>3. Salaries and player lists</h4></div><div class="pb">
+    <p style="margin:0 0 12px;color:var(--ink-2);font-size:13px">Required for FanDuel, since its entries file carries nothing but player ids. Optional for DraftKings — only when the entries export arrives without its salary table, or you want the pool loaded ahead of lock.</p>
+    <div class="drop" data-kind="salaries"><strong>Drop a DKSalaries or FanDuel players list</strong>
+      <span>Fills in name, position, team, opponent and salary for each player id</span></div>
+    <p style="margin:10px 0 0;color:var(--ink-3);font-size:12px">Keep the FanDuel file's original name. It has no date inside it, so the slate date is read from the filename.</p>
     <div style="margin-top:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
       <button class="btn ghost" id="relink">Re-link lineups to the player pool</button>
       <span class="note">Lineups imported before their salary file was loaded are stored with blank teams, so they can't be read for structure. This walks every lineup again against the ${np} players now loaded.</span>
     </div>
   </div></div>
   <div class="panel"><div class="ph"><h4>4. Standings</h4></div><div class="pb">
-    <p style="margin:0 0 12px;color:var(--ink-2);font-size:13px">Only needed when you want a single contest's results before the entry history catches up. Matched by Entry ID. Standings files usually omit payouts, so prefer the entry-history export above.</p>
+    <p style="margin:0 0 12px;color:var(--ink-2);font-size:13px">Only needed when you want a single contest's results before the entry history catches up. Matched by Entry ID. Standings files usually omit payouts, so prefer the entry-history export above. FanDuel results are not yet wired up — enter those by hand on the Entries view.</p>
     <div class="drop" data-kind="results"><strong>Drop a contest-standings CSV</strong>
       <span>Reads rank and points, and payout when the file carries one</span></div>
   </div></div>
@@ -1317,11 +1457,14 @@ function handleFile(file, kind){
       if(wanted && h.added)
         setTimeout(()=>toast(`Not tagged — "${wanted}" only applies to the lineups file. Tag these in bulk from the Entries view.`), 2900);
     } else if(kind==="salaries"){
-      const n = ingestPlayers(rows);
-      if(!n){ toast("No salary table found in that file"); return; }
+      /* DK and FanDuel ship different headers; pick by shape, not by
+         asking which site the file came from. */
+      let n = ingestPlayers(rows), site = "DraftKings";
+      if(!n){ n = ingestFDPlayers(rows, file.name); site = "FanDuel"; }
+      if(!n){ toast("No player table found in that file"); return; }
       const rl = relinkLineups();
       await persist(); render();
-      toast(`${n} players loaded${rl.fixed?` · ${rl.fixed} lineups re-linked`:""}`);
+      toast(`${n} ${site} players loaded${rl.fixed?` · ${rl.fixed} lineups re-linked`:""}`);
     } else if(kind==="results"){
       const r = ingestResults(rows);
       if(r.err){ toast(r.err); return; }
@@ -1331,8 +1474,9 @@ function handleFile(file, kind){
       const ap = document.getElementById("apprTag");
       const approach = ap ? ap.value.trim() : "";
       if(approach){ DB.settings.lastApproach = approach; }
-      const p = ingestPlayers(rows);
-      const r = ingestEntries(rows, approach);
+      const fd = isFDEntries(rows);
+      const p  = fd ? 0 : ingestPlayers(rows);
+      const r  = fd ? ingestFDEntries(rows, approach) : ingestEntries(rows, approach);
       if(r.err){ toast(r.err); return; }
       await persist(); render();
       const bits = [`${r.added} added`];
@@ -1340,9 +1484,14 @@ function handleFile(file, kind){
       if(approach)  bits.push(`tagged ${approach}`);
       if(r.empty)   bits.push(`${r.empty} unfilled`);
       if(p)         bits.push(`${p} players`);
-      toast(bits.join(" · "));
-      if(r.added && !p && !Object.keys(DB.players).length)
-        setTimeout(()=>toast("No salary table in that file — drop a DKSalaries CSV to fill in teams and positions"),2800);
+      toast((fd?"FanDuel · ":"")+bits.join(" · "));
+      /* A FanDuel entries file names only player ids. Without its
+         players list there are no teams, no positions and no date. */
+      const unresolved = r.added && !DB.entries.slice(-r.added).some(e=>e.lineup.some(s=>s.team));
+      if(fd && unresolved)
+        setTimeout(()=>toast("Player names and the slate date come from the FanDuel players list — drop it into Salaries, then Re-link."),2900);
+      else if(r.added && !p && !Object.keys(DB.players).length)
+        setTimeout(()=>toast("No salary table in that file — drop the salary/players file to fill in teams and positions"),2800);
     }
   };
   fr.readAsText(file);
@@ -1438,7 +1587,10 @@ document.querySelectorAll(".railbtn").forEach(b=>{
   if(saved && saved.entries) DB = Object.assign(DB, saved);
   if(!DB.settings) DB.settings = { ticketsAtFace:true };
   /* re-register any formats that only exist because of an import */
-  DB.entries.forEach(e=>{ if(!FORMATS[e.format]) registerFormat(e.format, e.sport||"?", e.format); });
+  DB.entries.forEach(e=>{
+    if(!FORMATS[e.format]) registerFormat(e.format, e.sport||"?", e.format);
+    if(!e.site) e.site = String(e.entryId||"").startsWith("fd-") ? "FD" : "DK";
+  });
   render();
 })();
 </script>
