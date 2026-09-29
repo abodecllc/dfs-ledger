@@ -134,7 +134,7 @@ label.fld input,label.fld select{width:100%}
 <div class="shell">
   <nav class="rail">
     <div class="brand"><h1>DFS Ledger</h1><p id="brandSub">no entries yet</p>
-      <p style="margin:4px 0 0;font-size:10.5px;color:#4d5761;font-family:var(--mono)">build 23</p></div>
+      <p style="margin:4px 0 0;font-size:10.5px;color:#4d5761;font-family:var(--mono)">build 24</p></div>
     <div class="railgroup">Track</div>
     <button class="railbtn on" data-view="dash">Overview <span class="cnt" id="cDash"></span></button>
     <button class="railbtn" data-view="entries">Entries <span class="cnt" id="cEntries"></span></button>
@@ -785,6 +785,84 @@ function ingestFDEntries(rows, approach){
   return {added, updated, empty};
 }
 
+
+/* FanDuel "entry history" export from the Activity page. The mirror of
+   DraftKings' history file: every entry with place, score, field size,
+   fee and winnings, and no lineups. FanDuel prefixes the id with S,
+   the entries upload file does not, so both normalize to fd-<digits>
+   and results land on lineups imported before lock. */
+const FD_SPORTS = { mlb:"MLB", nba:"NBA", nfl:"NFL", nhl:"NHL", pga:"GOLF",
+                    mma:"MMA", fifa:"SOC", soccer:"SOC", nascar:"NAS",
+                    tennis:"TEN", cbb:"NCAAMB", cfb:"CFB", wnba:"WNBA" };
+const fdEntryId = raw => "fd-" + String(raw||"").trim().replace(/^[A-Za-z]+/,"");
+
+function isFDHistory(rows){
+  return rows.some(r=>{
+    const low = r.map(x=>String(x).toLowerCase().trim());
+    return low.includes("entry id") && low.some(h=>/^winnings/.test(h));
+  });
+}
+function ingestFDHistory(rows){
+  let hdr=null, hi=-1;
+  for(let i=0;i<rows.length;i++){
+    const low = rows[i].map(x=>String(x).toLowerCase().trim());
+    if(low.includes("entry id") && low.some(h=>/^winnings/.test(h))){ hdr=low; hi=i; break; }
+  }
+  if(!hdr) return {err:"Not a FanDuel entry-history file (needs Entry Id and Winnings columns)."};
+  const C = n => hdr.indexOf(n);
+  const F = re => hdr.findIndex(h=>re.test(h));
+  const i_id=C("entry id"), i_sp=C("sport"), i_dt=C("date"), i_ti=C("title"),
+        i_sc=C("score"), i_pos=C("position"), i_ent=C("entries"),
+        i_opp=C("opponent"), i_fee=F(/^entry \(/), i_win=F(/^winnings/);
+
+  const byId = {}; DB.entries.forEach(e=>{ byId[e.entryId]=e; });
+  let added=0, updated=0, cancelled=0;
+  for(let i=hi+1;i<rows.length;i++){
+    const r=rows[i]; const raw=String(r[i_id]||"").trim();
+    if(!raw || !/\d/.test(raw)) continue;
+    const opp = String(r[i_opp]||"").trim();
+    /* A cancelled contest is refunded. Counting the fee as a loss would
+       quietly understate ROI, so leave those out. */
+    if(/cancel/i.test(opp)){ cancelled++; continue; }
+
+    const eid = fdEntryId(raw);
+    const dm  = String(r[i_dt]||"").match(/(\d{4})\D(\d{1,2})\D(\d{1,2})/);
+    const title = String(r[i_ti]||"").trim();
+    const won = i_win>=0 ? num(r[i_win]) : 0;
+    const res = {
+      site:"FD", contest:title,
+      date: dm ? `${dm[1]}-${String(dm[2]).padStart(2,"0")}-${String(dm[3]).padStart(2,"0")}` : "",
+      fee: i_fee>=0 ? num(r[i_fee]) : 0,
+      points: i_sc>=0 && String(r[i_sc]).trim()!=="" ? num(r[i_sc]) : null,
+      rank:   i_pos>=0 && num(r[i_pos])>0 ? num(r[i_pos]) : null,
+      fieldSize: i_ent>=0 && String(r[i_ent]).trim()!=="" ? num(r[i_ent]) : null,
+      payoutCash: won, payoutTicket: 0,
+      payout: won,
+      /* FanDuel names the contest shape outright in its Opponent column,
+         which beats guessing from the title. */
+      contestClass: /satellite|qualifier/i.test(title) ? "WTA"
+                  : (opp && !/^tournament$/i.test(opp)) ? "Cash" : "GPP"
+    };
+    const ex = byId[eid];
+    if(ex){
+      /* Never clobber what a lineups import already established. */
+      const keep = { format:ex.format, sport:ex.sport, slate:ex.slate, lineup:ex.lineup };
+      Object.assign(ex, res, keep);
+      updated++; continue;
+    }
+    const sport = FD_SPORTS[String(r[i_sp]||"").toLowerCase().trim()] || String(r[i_sp]||"?").toUpperCase();
+    /* This file carries no roster, so the format is only a guess —
+       classic. A later lineups import corrects it. */
+    const fmt = registerFormat(`${sport.toLowerCase()}-classic`, sport, `${sport} Classic`);
+    const e = Object.assign({
+      id:uid(), entryId:eid, contestId:"", format:fmt, sport, slate:"", lineup:[],
+      approach:"Untagged", source:"FanDuel entry history", notes:""
+    }, res);
+    DB.entries.push(e); byId[eid]=e; added++;
+  }
+  return {added, updated, cancelled};
+}
+
 /* ============ LEGACY MLB TRACKER CONVERSION ============
    The old MLB tracker stored one row per entry with a result but no
    lineup. Those rows still carry bankroll, contest and approach-tag
@@ -1259,9 +1337,10 @@ function vImport(){
   return `<h2 class="sec">Import</h2>
   <p class="sub">Drop DraftKings or FanDuel files here in any order. Site, sport and format are read from the file itself, so everything lands in one ledger.</p>
   <div class="panel"><div class="ph"><h4>1. Entry history</h4><span class="note">the most complete source</span></div><div class="pb">
-    <p style="margin:0 0 12px;color:var(--ink-2);font-size:13px">The <b>contest entry history</b> export from your My Contests page on DraftKings. Every entry across every sport, with place, points, field size and winnings — everything but the lineups. Rows already in the ledger are updated in place, so results land on lineups you imported earlier.</p>
-    <div class="drop" data-kind="history"><strong>Drop the entry-history CSV, or click to choose</strong>
-      <span>draftkings-contest-entry-history.csv</span></div>
+    <p style="margin:0 0 12px;color:var(--ink-2);font-size:13px">The <b>contest entry history</b> from DraftKings' My Contests page, or the <b>entry history</b> from FanDuel's Activity page. Every entry across every sport, with place, points, field size and winnings — everything but the lineups. Rows already in the ledger are updated in place, so results land on lineups you imported earlier.</p>
+    <div class="drop" data-kind="history"><strong>Drop an entry-history CSV, or click to choose</strong>
+      <span>Either site. FanDuel exports a month at a time — drop each month, order doesn't matter</span></div>
+    <p style="margin:10px 0 0;color:var(--ink-3);font-size:12px">Contests FanDuel marks cancelled are skipped, since the entry fee was refunded and counting it as a loss would understate ROI.</p>
     <p style="margin:10px 0 0;color:var(--ink-3);font-size:12px">This file carries no approach tag — DraftKings doesn't know how a lineup was built. Entries that arrive here are filed as Untagged. Tag them with the lineups file below, or in bulk from the Entries view.</p>
     <label style="display:flex;align-items:center;gap:8px;margin-top:14px;font-size:13px;cursor:pointer">
       <input type="checkbox" id="tixFace"> Count ticket winnings at face value
@@ -1444,14 +1523,16 @@ function handleFile(file, kind){
     if(kind==="history"){
       const sel = document.getElementById("apprTag");
       const wanted = sel ? sel.value.trim() : "";
-      const h = ingestHistory(rows);
+      const fd = isFDHistory(rows);
+      const h = fd ? ingestFDHistory(rows) : ingestHistory(rows);
       if(h.err){ toast(h.err); return; }
       await persist(); render();
       const bits=[];
       if(h.added) bits.push(`${h.added} added`);
       if(h.updated) bits.push(`${h.updated} updated`);
       if(h.tickets) bits.push(`${h.tickets} ticket prizes`);
-      toast(bits.length ? bits.join(" · ") : "Nothing to import");
+      if(h.cancelled) bits.push(`${h.cancelled} cancelled skipped`);
+      toast((fd?"FanDuel · ":"")+(bits.length ? bits.join(" · ") : "Nothing to import"));
       /* The approach picker belongs to the lineups drop zone. Saying so
          beats letting someone believe a whole import got tagged. */
       if(wanted && h.added)
